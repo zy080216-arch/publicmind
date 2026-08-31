@@ -20,6 +20,131 @@ except ImportError:
 
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiTests(unittest.TestCase):
+    def test_question_gap_triggers_targeted_search_and_persists_new_source(self):
+        search_queries = []
+
+        class FakeSearchProvider:
+            name = "fixture-search"
+
+            def search(self, query, count=10):
+                search_queries.append(query)
+                if "seventeen" in query.casefold() or "site:x.com/paulg" in query.casefold():
+                    return [
+                        SearchHit(
+                            "https://x.com/paulg/status/17",
+                            "Paul Graham on what to do at seventeen",
+                            "Paul Graham gives direct advice to people who are 17.",
+                        )
+                    ]
+                return [
+                    SearchHit(
+                        "https://paulgraham.example/about",
+                        "Paul Graham official profile",
+                        "Paul Graham is an essayist and Y Combinator co-founder.",
+                    )
+                ]
+
+        class FakeConnector(SourceConnector):
+            platform = "fixture"
+
+            def can_handle(self, url):
+                return True
+
+            async def fetch(self, url):
+                if "/status/17" in url:
+                    text = (
+                        "Paul Graham wrote that at 17, you should explore widely, "
+                        "learn to make things, and avoid optimizing too early for prestige."
+                    )
+                    title = "What to do at seventeen"
+                else:
+                    text = "Paul Graham co-founded Y Combinator and writes essays about startups."
+                    title = "Paul Graham profile"
+                return RawDocument(
+                    source_url=url,
+                    source_type="article",
+                    title=title,
+                    author="Paul Graham",
+                    published_at="2026-08-30",
+                    raw_text=text,
+                )
+
+        class FakeLLMProvider:
+            name = "fixture-llm"
+
+            def generate_json(self, system, prompt):
+                if "用户问题：" in prompt:
+                    if "https://x.com/paulg/status/17" in prompt:
+                        return {
+                            "answer": "他建议 17 岁时广泛探索、学习创造，不要过早追逐声望。",
+                            "source_urls": ["https://x.com/paulg/status/17"],
+                            "insufficient_knowledge": False,
+                            "search_queries": [],
+                        }
+                    return {
+                        "answer": "现有人物库没有收录他对 17 岁年轻人的直接建议。",
+                        "source_urls": [],
+                        "insufficient_knowledge": True,
+                        "search_queries": ["site:x.com/paulg seventeen advice"],
+                    }
+                return {
+                    "title": "Paul Graham 人物全景",
+                    "overview": "Paul Graham 是 Y Combinator 联合创始人和随笔作者。",
+                    "identity": ["Y Combinator 联合创始人", "随笔作者"],
+                    "accomplishments": [],
+                    "viewpoint_topics": [],
+                    "viewpoint_evolution": [],
+                    "timeline": [],
+                    "external_views": [],
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = create_app(
+                str(root / "publicmind.db"),
+                str(root / "exports"),
+                search_provider=FakeSearchProvider(),
+                llm_provider=FakeLLMProvider(),
+                connector_registry=ConnectorRegistry([FakeConnector()]),
+            )
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "Paul Graham"}).json()
+                started = client.post(
+                    "/api/persons/%s/build" % person["id"],
+                    json={"anchors": ["Y Combinator"], "language_mode": "zh"},
+                ).json()
+                job = client.get("/api/build-jobs/%s" % started["id"]).json()
+                self.assertEqual(job["status"], "completed")
+
+                answer = client.post(
+                    "/api/persons/%s/ask" % person["id"],
+                    json={"question": "他认为 17 岁该做什么？"},
+                )
+                self.assertEqual(answer.status_code, 200)
+                payload = answer.json()
+                self.assertTrue(payload["research"]["triggered"])
+                self.assertEqual(payload["research"]["status"], "expanded")
+                self.assertEqual(payload["research"]["new_documents"], 1)
+                self.assertIn("广泛探索", payload["answer"])
+                self.assertEqual(
+                    payload["sources"][0]["url"], "https://x.com/paulg/status/17"
+                )
+                self.assertTrue(any("site:x.com/paulg" in query for query in search_queries))
+
+                documents = client.get(
+                    "/api/persons/%s/documents" % person["id"]
+                ).json()
+                self.assertEqual(len(documents), 2)
+                report = client.get(
+                    "/api/persons/%s/report" % person["id"]
+                ).json()["content"]
+                self.assertTrue(
+                    any(
+                        source["url"] == "https://x.com/paulg/status/17"
+                        for source in report["public_sources"]
+                    )
+                )
+
     def test_wikipedia_correction_and_reference_identity_baseline(self):
         class FakeResponse:
             def __init__(self, payload):

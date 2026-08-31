@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..models import Person, SourceCandidate
 from ..store import Repository
-from .base import SearchProvider
+from .base import SearchProvider, SearchProviderError
 from .scoring import score_hit
 
 
@@ -90,4 +90,41 @@ class DiscoveryService:
                     risks=scored.risks,
                 )
                 candidates.append(self.repository.upsert_candidate(candidate))
+        return sorted(candidates, key=lambda item: (-item.score, item.title.casefold()))
+
+    def discover_targeted(
+        self, person: Person, queries: Sequence[str], per_query: int = 6
+    ) -> List[SourceCandidate]:
+        """Discover sources for one concrete question without rerunning broad discovery."""
+
+        seen = set()
+        candidates: List[SourceCandidate] = []
+        failures: List[Exception] = []
+        for query in list(dict.fromkeys(queries))[:4]:
+            try:
+                hits = self.provider.search(query, count=per_query)
+            except SearchProviderError as exc:
+                failures.append(exc)
+                continue
+            for index, hit in enumerate(hits):
+                normalized_url = canonical_url(hit.url)
+                if normalized_url in seen:
+                    continue
+                seen.add(normalized_url)
+                scored = score_hit(hit, person.name, [])
+                candidate = SourceCandidate(
+                    person_id=person.id or "",
+                    url=normalized_url,
+                    title=hit.title or normalized_url,
+                    snippet=hit.snippet,
+                    provider=self.provider.name,
+                    query=query,
+                    score=min(100, scored.score + max(0, 10 - index * 2)),
+                    source_role=scored.source_role,
+                    reasons=scored.reasons + ["针对当前问询补充检索"],
+                    risks=scored.risks,
+                )
+                candidates.append(self.repository.upsert_candidate(candidate))
+        if not candidates and failures:
+            raise SearchProviderError(str(failures[-1]))
         return sorted(candidates, key=lambda item: (-item.score, item.title.casefold()))

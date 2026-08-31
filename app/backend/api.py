@@ -23,6 +23,7 @@ from .intelligence import (
     LLMProviderError,
     OpenAICompatibleProvider,
     ProfileBuilder,
+    fallback_research_queries,
 )
 from .markdown import VaultExporter
 from .media import ImageProvider, WikimediaImageProvider
@@ -270,6 +271,63 @@ def create_app(
             return active_image_provider.discover(person.name, reference_urls, limit=4)
         except Exception:
             return []
+
+    def research_question(
+        repository: Repository,
+        person_id: str,
+        queries: List[str],
+        max_sources: int = 6,
+    ) -> int:
+        """Search, ingest and persist sources for one question-specific knowledge gap."""
+
+        person = repository.get_person(person_id)
+        if not person:
+            return 0
+        candidates = DiscoveryService(
+            repository, current_search_provider()
+        ).discover_targeted(person, queries)
+        existing_urls = {document.source_url for document in repository.list_documents(person_id)}
+        inserted = 0
+        attempted = 0
+        for candidate in candidates:
+            if candidate.url in existing_urls or attempted >= max_sources:
+                continue
+            attempted += 1
+            if candidate.id and candidate.status != "accepted":
+                candidate = repository.decide_candidate(candidate.id, "accepted")
+            source = repository.add_source(
+                person_id, candidate.url, candidate.source_role
+            )
+            repository.update_source_status(source.id or "", "fetching")
+            try:
+                result = asyncio.run(
+                    IngestPipeline(repository, connector_registry).ingest(
+                        person_id, candidate.url
+                    )
+                )
+                if result.document:
+                    existing_urls.add(candidate.url)
+                if result.inserted:
+                    inserted += 1
+            except Exception:
+                repository.update_source_status(source.id or "", "failed")
+
+        if inserted:
+            report = repository.get_report(person_id)
+            if report:
+                content = enrich_report_content(repository, person_id, report.content)
+                content["public_sources"] = [
+                    {
+                        "title": document.title,
+                        "url": document.source_url,
+                        "platform": _public_platform(document.source_url),
+                        "author": document.author or "",
+                        "published_at": document.published_at or "",
+                    }
+                    for document in repository.list_documents(person_id)
+                ]
+                repository.save_report(person_id, content)
+        return inserted
 
     app.mount("/assets", StaticFiles(directory=str(frontend_dir)), name="assets")
 
@@ -842,19 +900,62 @@ def create_app(
                 raise HTTPException(status_code=404, detail="请先生成人物知识档案")
             documents = repository.list_documents(person_id)
             try:
-                answer = KnowledgeAnswerer(current_llm_provider()).answer(
+                answerer = KnowledgeAnswerer(current_llm_provider())
+                report_content = enrich_report_content(
+                    repository, person_id, report.content
+                )
+                answer = answerer.answer(
                     person,
-                    enrich_report_content(repository, person_id, report.content),
+                    report_content,
                     documents,
                     question,
                 )
             except LLMProviderError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+            research_triggered = bool(answer.get("insufficient_knowledge"))
+            new_documents = 0
+            research_status = "not_needed"
+            if research_triggered:
+                queries = answer.get("search_queries") or fallback_research_queries(
+                    person, report_content, question
+                )
+                research_status = "no_new_material"
+                try:
+                    new_documents = research_question(
+                        repository, person_id, list(queries)
+                    )
+                except SearchProviderError:
+                    research_status = "search_unavailable"
+                if new_documents:
+                    research_status = "expanded"
+                    documents = repository.list_documents(person_id)
+                    refreshed_report = repository.get_report(person_id)
+                    try:
+                        answer = answerer.answer(
+                            person,
+                            enrich_report_content(
+                                repository,
+                                person_id,
+                                refreshed_report.content if refreshed_report else report_content,
+                            ),
+                            documents,
+                            question,
+                        )
+                    except LLMProviderError:
+                        pass
+
+            answer.pop("search_queries", None)
             titles = {document.source_url: document.title for document in documents}
             answer["sources"] = [
                 {"url": url, "title": titles.get(url, url)}
                 for url in answer.pop("source_urls", [])
             ]
+            answer["research"] = {
+                "triggered": research_triggered,
+                "status": research_status,
+                "new_documents": new_documents,
+            }
             return answer
 
     @app.get("/api/build-jobs/{job_id}/download")

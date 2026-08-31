@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Dict, Iterable, List, Set
+from urllib.parse import urlparse
 
 from ..models import Document, Person
 from .base import LLMProvider, LLMProviderError
 
 
-QA_SYSTEM = """你是人物知识库的问询编辑。只根据提供的本地人物档案和资料片段回答，不使用模型自身记忆补充事实。直接回答用户的问题，不模仿人物本人说话。材料不足时明确说明当前知识库没有足够信息。输出纯 JSON，不显示内部检索、评分或置信度术语。"""
+QA_SYSTEM = """你是人物知识库的问询编辑。只根据提供的本地人物档案和资料片段回答，不使用模型自身记忆补充事实。直接回答用户的问题，不模仿人物本人说话。材料不足时明确说明当前知识库没有足够信息，并为补充研究生成少量精确的网页搜索词。输出纯 JSON，不显示内部检索、评分或置信度术语。"""
 
 
 def _query_terms(question: str) -> List[str]:
@@ -57,11 +58,40 @@ def validate_answer(raw: Dict[str, Any], allowed_urls: Iterable[str]) -> Dict[st
     source_urls = []
     if isinstance(urls, list):
         source_urls = [str(url) for url in urls if str(url) in allowed]
+    raw_queries = raw.get("search_queries", [])
+    search_queries: List[str] = []
+    if isinstance(raw_queries, list):
+        for value in raw_queries:
+            query = " ".join(str(value).split()).strip()
+            if query and len(query) <= 220 and query not in search_queries:
+                search_queries.append(query)
+            if len(search_queries) >= 4:
+                break
     return {
         "answer": answer,
         "source_urls": list(dict.fromkeys(source_urls)),
         "insufficient_knowledge": bool(raw.get("insufficient_knowledge", False)),
+        "search_queries": search_queries,
     }
+
+
+def fallback_research_queries(
+    person: Person, report: Dict[str, Any], question: str
+) -> List[str]:
+    """Build conservative queries when the model flags a gap but omits a plan."""
+
+    queries = ['"%s" %s' % (person.name, " ".join(question.split()))]
+    for profile in report.get("public_profiles", []):
+        if not isinstance(profile, dict):
+            continue
+        url = str(profile.get("url") or "")
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().removeprefix("www.")
+        handle = parsed.path.strip("/").split("/", 1)[0]
+        if host in {"x.com", "twitter.com"} and handle:
+            queries.insert(0, "site:x.com/%s %s" % (handle, " ".join(question.split())))
+            break
+    return queries[:3]
 
 
 class KnowledgeAnswerer:
@@ -101,7 +131,15 @@ class KnowledgeAnswerer:
         prompt = """研究对象：{name}
 用户问题：{question}
 
-请用与用户问题相同的语言回答。先给结论，再解释相关背景。不要把外部评价写成研究对象本人的观点。若资料无法直接回答，明确说当前知识库未收录足够材料，并说明已经能确认到的最接近信息。source_urls 只能使用下面资料中逐字出现的 URL。
+请用与用户问题相同的语言回答。先给结论，再解释相关背景。不要把外部评价写成研究对象本人的观点。若资料无法直接回答，明确说当前知识库未收录足够材料，并说明已经能确认到的最接近信息，同时把 insufficient_knowledge 设为 true。
+
+仅当 insufficient_knowledge 为 true 时，生成 2 至 4 条 search_queries，用来继续查找这个人物对该问题的直接表达：
+- 查询必须同时限定人物身份和问题中的关键概念；
+- 中英文人物或问题可同时给出中文与英文查询；
+- 若档案中已有 X、博客或其他本人主页，可优先生成 site: 限定查询；
+- search_queries 是搜索词，不得编造具体网页 URL。
+
+如果现有资料足够回答，把 search_queries 留空。source_urls 只能使用下面资料中逐字出现的 URL。
 
 返回结构：
 {schema}
@@ -119,6 +157,7 @@ class KnowledgeAnswerer:
                     "answer": "直接回答",
                     "source_urls": ["只能使用输入 URL"],
                     "insufficient_knowledge": False,
+                    "search_queries": [],
                 },
                 ensure_ascii=False,
             ),

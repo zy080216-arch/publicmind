@@ -19,8 +19,8 @@ const el = Object.fromEntries([
   "result-title", "result-language", "result-profiles", "result-sources", "result-overview",
   "result-identity", "result-accomplishments", "result-viewpoints", "result-evolution",
   "result-external", "result-timeline", "portrait-section", "result-images", "download-link",
-  "ask-form", "ask-question", "ask-button", "ask-answer", "ask-answer-text",
-  "ask-answer-sources", "person-count", "person-list",
+  "ask-form", "ask-question", "ask-button", "ask-status", "ask-answer", "ask-answer-meta",
+  "ask-answer-text", "ask-answer-sources", "person-count", "person-list",
   "settings-button", "settings-dialog", "settings-close", "settings-form", "brave-key",
   "deepseek-key", "saved-status", "notice",
 ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]));
@@ -285,6 +285,8 @@ function renderReport(report, downloadUrl = null, personId = null) {
   if (!content.images?.length && resolvedPersonId) refreshImages(resolvedPersonId);
   el.ask_question.value = "";
   el.ask_answer.hidden = true;
+  el.ask_answer_meta.hidden = true;
+  el.ask_answer_meta.textContent = "";
   el.ask_answer_text.textContent = "";
   el.ask_answer_sources.replaceChildren();
 
@@ -340,16 +342,32 @@ async function askKnowledgeBase(event) {
   const question = el.ask_question.value.trim();
   if (!question || !state.activePersonId) return;
   el.ask_button.disabled = true;
-  el.ask_button.textContent = "正在查阅资料…";
+  el.ask_button.textContent = "…";
+  el.ask_status.textContent = "正在查阅现有人物库";
   el.ask_answer.hidden = false;
   el.ask_answer.classList.add("is-loading");
-    el.ask_answer_text.textContent = "正在查找…";
+  el.ask_answer_meta.hidden = true;
+  el.ask_answer_meta.textContent = "";
+  el.ask_answer_text.textContent = "正在查找相关资料…";
   el.ask_answer_sources.replaceChildren();
+  const researchHint = window.setTimeout(() => {
+    el.ask_status.textContent = "资料不足时正在进行针对性补充检索";
+    el.ask_answer_text.textContent = "正在搜索并读取与这个问题直接相关的新资料…";
+  }, 2200);
   try {
     const answer = await (await request(`/api/persons/${state.activePersonId}/ask`, {
       method: "POST", body: JSON.stringify({ question }),
     })).json();
     el.ask_answer_text.textContent = answer.answer;
+    if (answer.research?.triggered) {
+      const count = Number(answer.research.new_documents || 0);
+      el.ask_answer_meta.hidden = false;
+      el.ask_answer_meta.textContent = count
+        ? `已针对这个问题补充检索，并新增 ${count} 篇资料。`
+        : answer.research.status === "search_unavailable"
+          ? "现有人物库资料不足，补充检索暂时不可用。"
+          : "已完成针对性补充检索，暂未找到可读取的新资料。";
+    }
     (answer.sources || []).forEach((source) => {
       const link = node("a", "", source.title || "打开原文");
       link.href = source.url; link.target = "_blank"; link.rel = "noopener noreferrer";
@@ -359,9 +377,11 @@ async function askKnowledgeBase(event) {
     el.ask_answer_text.textContent = error.message;
     notice(error.message, "error");
   } finally {
+    window.clearTimeout(researchHint);
     el.ask_answer.classList.remove("is-loading");
     el.ask_button.disabled = false;
-    el.ask_button.textContent = "在知识库中询问 →";
+    el.ask_button.textContent = "↑";
+    el.ask_status.textContent = "先查人物库，必要时自动补充检索";
   }
 }
 
