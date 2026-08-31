@@ -58,12 +58,8 @@ function renderConfig() {
   const allReady = Boolean(searchReady && state.config?.llm_configured);
   el.config_light.classList.toggle("is-ready", allReady);
   el.config_hint.classList.toggle("is-ready", allReady);
-  el.config_hint.textContent = allReady
-    ? `API 已就绪 · Brave Search + ${state.config.llm_provider} ${state.config.llm_model}`
-    : searchReady
-      ? "可以查找人物；正式整理前还需要 DeepSeek API Key。"
-      : "开始前需要配置 Brave Search；生成档案还需要 DeepSeek API Key。";
-  el.saved_status.textContent = `${searchReady ? "Brave 已配置" : "Brave 未配置"} · ${state.config?.llm_configured ? "DeepSeek 已配置" : "DeepSeek 未配置"}`;
+  el.config_hint.textContent = allReady ? "已连接" : searchReady ? "缺少 DeepSeek" : "设置 API";
+  el.saved_status.textContent = `${searchReady ? "Brave 已连接" : "Brave 未连接"} · ${state.config?.llm_configured ? "DeepSeek 已连接" : "DeepSeek 未连接"}`;
 }
 
 async function loadConfig() {
@@ -129,7 +125,7 @@ async function searchIdentity(event) {
   event.preventDefault();
   if (!state.config?.search_configured) {
     el.settings_dialog.showModal();
-    notice("请先配置 Brave Search API Key。", "error");
+    notice("先连接 Brave Search。", "error");
     return;
   }
   const name = el.person_name.value.trim();
@@ -170,7 +166,7 @@ async function addManualSource(event) {
     if (!state.manualSources.some((item) => item.url === source.url)) state.manualSources.push(source);
     el.manual_source_url.value = "";
     renderManualSources();
-    notice("这个网址会和自动找到的资料一起整理。", "info");
+    notice("网址已加入。", "info");
   } catch (error) { notice(error.message, "error"); }
 }
 
@@ -191,7 +187,7 @@ function updateProgress(job) {
 async function confirmIdentity() {
   if (!state.config?.llm_configured) {
     el.settings_dialog.showModal();
-    notice("身份已经确认；请配置 DeepSeek API Key 后开始整理。", "error");
+    notice("连接 DeepSeek 后即可整理。", "error");
     return;
   }
   el.identity_confirm.disabled = true;
@@ -225,7 +221,7 @@ async function pollJob(jobId) {
       renderReport(report, job.download_url);
       el.progress_panel.hidden = true;
       await loadPeople();
-      notice("人物档案已经完成，可以直接在网页阅读。", "info");
+      notice("档案完成。", "info");
       return;
     }
     if (job.status === "failed") throw new Error(job.error || "人物档案生成失败");
@@ -281,8 +277,8 @@ function renderReport(report, downloadUrl = null, personId = null) {
   const content = report.content || report;
   const resolvedPersonId = personId || report.person_id || null;
   state.activePersonId = resolvedPersonId;
-  const languageLabels = { zh: "中文导读 · 来源原文保留", en: "ENGLISH", bilingual: "中英双语" };
-  el.result_title.textContent = content.title || "人物全景";
+  const languageLabels = { zh: "中文", en: "English", bilingual: "中英双语" };
+  el.result_title.textContent = (content.title || "人物档案").replace(/\s*人物全景\s*$/, "");
   el.result_language.textContent = languageLabels[content.language_mode] || languageLabels.zh;
   el.result_overview.textContent = content.overview || "人物知识档案已生成。";
   renderImages(content.images || []);
@@ -347,7 +343,7 @@ async function askKnowledgeBase(event) {
   el.ask_button.textContent = "正在查阅资料…";
   el.ask_answer.hidden = false;
   el.ask_answer.classList.add("is-loading");
-  el.ask_answer_text.textContent = "正在这份人物档案中寻找相关内容。";
+    el.ask_answer_text.textContent = "正在查找…";
   el.ask_answer_sources.replaceChildren();
   try {
     const answer = await (await request(`/api/persons/${state.activePersonId}/ask`, {
@@ -390,11 +386,11 @@ async function saveSettings(event) {
   const payload = {};
   if (el.brave_key.value.trim()) payload.brave_api_key = el.brave_key.value.trim();
   if (el.deepseek_key.value.trim()) payload.deepseek_api_key = el.deepseek_key.value.trim();
-  if (!Object.keys(payload).length) { notice("请至少填写一个新的 API Key。", "error"); return; }
+  if (!Object.keys(payload).length) { notice("填写一个 API Key。", "error"); return; }
   try {
     state.config = await (await request("/api/config", { method: "POST", body: JSON.stringify(payload) })).json();
     el.brave_key.value = ""; el.deepseek_key.value = ""; renderConfig();
-    notice("API Key 已保存到本机。", "info"); el.settings_dialog.close();
+    notice("已保存。", "info"); el.settings_dialog.close();
   } catch (error) { notice(error.message, "error"); }
 }
 
@@ -409,6 +405,24 @@ el.settings_form.addEventListener("submit", saveSettings);
 el.ask_form.addEventListener("submit", askKnowledgeBase);
 document.querySelectorAll(".ask-suggestions button").forEach((button) => {
   button.addEventListener("click", () => { el.ask_question.value = button.textContent; el.ask_question.focus(); });
+});
+
+const revealObserver = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add("is-visible");
+      revealObserver.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.08 });
+document.querySelectorAll(".reveal").forEach((item) => revealObserver.observe(item));
+
+const hero = document.querySelector(".hero");
+hero.addEventListener("pointermove", (event) => {
+  const x = (event.clientX / window.innerWidth - .5) * 12;
+  const y = (event.clientY / window.innerHeight - .5) * 8;
+  hero.style.setProperty("--wave-x", `${x}px`);
+  hero.style.setProperty("--wave-y", `${y}px`);
 });
 
 Promise.all([loadConfig(), loadPeople()]).catch((error) => notice(error.message, "error"));
