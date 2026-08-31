@@ -85,6 +85,10 @@ export PUBLICMIND_LLM_MODEL="deepseek-v4-flash"
 项目当前兼容这台 Mac 的 Python 3.9，也支持更高版本。
 
 ```bash
+git clone https://github.com/zy080216-arch/publicmind.git
+cd PublicMind
+python3 -m venv .venv
+source .venv/bin/activate
 python3 -m pip install -e '.[youtube]'
 uvicorn app.backend.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
@@ -100,6 +104,19 @@ python3 -m pip check
 ```
 
 测试使用假搜索、假网页和假 LLM，不消耗真实 API 额度。完整测试覆盖：检索角色分离、Wikipedia 身份纠错、Wikimedia 图片与许可解析、人物知识库问询、网页/YouTube 接口、幂等抓取、不可变原文证据、模型虚构 URL 过滤、一键任务、中文 Vault 与 Obsidian 内链。
+
+## 分享与本地数据
+
+PublicMind 以 MIT License 开源。你可以复制、修改和分发代码；每位使用者应在自己的电脑运行服务，并使用自己的 Brave Search 与 DeepSeek API Key。
+
+以下内容只保存在本机，不会进入 Git：
+
+- `data/settings.json`：本机 API Key。
+- `data/*.db`：人物、来源和报告数据库。
+- `data/raw/`、`data/processed/`：抓取和处理后的资料。
+- `data/exports/`：导出的 Obsidian Vault。
+
+不要把真实 API Key 写进 README、Issue、提交记录或截图。详细安全边界见 [SECURITY.md](SECURITY.md)。当前版本是单用户本地应用，不应直接暴露到公网。
 
 ## 边界
 
