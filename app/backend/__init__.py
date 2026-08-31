@@ -1,0 +1,2 @@
+"""PublicMind backend package."""
+

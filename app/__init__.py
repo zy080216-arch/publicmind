@@ -1,0 +1,2 @@
+"""PublicMind application package."""
+
