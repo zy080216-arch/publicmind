@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -39,12 +40,24 @@ class DiscoveryService:
     def queries(person: Person, anchors: Sequence[str]) -> List[str]:
         anchor_text = " ".join(anchors[:4]).strip()
         base = '"%s"' % person.name
-        return [
+        queries = [
             "%s %s official" % (base, anchor_text),
             "%s %s X Twitter GitHub YouTube blog 官网 主页" % (base, anchor_text),
             "%s %s interview podcast 访谈" % (base, anchor_text),
             "%s %s profile analysis review 评论 报道" % (base, anchor_text),
         ]
+        identity_text = "%s %s" % (person.name, anchor_text)
+        if re.search(r"[\u3400-\u9fff]", identity_text):
+            queries.extend(
+                [
+                    "%s %s 小红书 微信公众号 视频号" % (base, anchor_text),
+                    "%s %s site:xiaohongshu.com OR site:mp.weixin.qq.com" % (base, anchor_text),
+                    "%s %s site:channels.weixin.qq.com OR 视频号" % (base, anchor_text),
+                    "%s %s 百度百科 百度采访 site:baike.baidu.com" % (base, anchor_text),
+                    "%s %s 微博 知乎 B站 抖音" % (base, anchor_text),
+                ]
+            )
+        return queries
 
     def discover(self, person: Person, anchors: Sequence[str], per_query: int = 8) -> List[SourceCandidate]:
         seen = set()

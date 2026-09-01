@@ -5,12 +5,13 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
-from app.backend.api import create_app
+from app.backend.api import _public_platform, create_app
 from app.backend.connectors import ConnectorRegistry, SourceConnector
 from app.backend.connectors.web import WebConnector
 from app.backend.discovery.base import SearchHit
+from app.backend.discovery.service import DiscoveryService
 from app.backend.discovery.wikipedia import WikipediaSearchProvider
-from app.backend.models import RawDocument
+from app.backend.models import Person, RawDocument
 
 try:
     from fastapi.testclient import TestClient
@@ -20,6 +21,79 @@ except ImportError:
 
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiTests(unittest.TestCase):
+    def test_chinese_people_receive_domestic_source_queries(self):
+        chinese_queries = DiscoveryService.queries(Person(name="雷军", slug="lei-jun"), ["小米"])
+        joined = "\n".join(chinese_queries)
+        self.assertIn("小红书", joined)
+        self.assertIn("微信公众号", joined)
+        self.assertIn("视频号", joined)
+        self.assertIn("百度百科", joined)
+        self.assertIn("site:xiaohongshu.com", joined)
+        english_queries = DiscoveryService.queries(Person(name="Sam Altman", slug="sam-altman"), ["OpenAI"])
+        self.assertFalse(any("xiaohongshu" in query for query in english_queries))
+        self.assertEqual(_public_platform("https://mp.weixin.qq.com/s/example"), "微信公众号")
+        self.assertEqual(_public_platform("https://www.xiaohongshu.com/user/profile/demo"), "小红书")
+        self.assertEqual(_public_platform("https://baike.baidu.com/item/demo"), "百度百科")
+
+    def test_existing_dossier_can_be_refreshed_with_a_new_source(self):
+        class FakeConnector(SourceConnector):
+            platform = "fixture"
+
+            def can_handle(self, url):
+                return True
+
+            async def fetch(self, url):
+                return RawDocument(
+                    source_url=url,
+                    source_type="article",
+                    title="最新公开访谈",
+                    author="测试人物",
+                    published_at="2026-09-01",
+                    raw_text="测试人物在最新访谈中补充了自己的长期观点。",
+                )
+
+        class FakeLLMProvider:
+            name = "fixture-llm"
+
+            def generate_json(self, system, prompt):
+                return {
+                    "title": "测试人物 人物全景",
+                    "overview": "档案已根据最新访谈更新。",
+                    "identity": ["测试人物"],
+                    "accomplishments": [],
+                    "viewpoint_topics": [],
+                    "viewpoint_evolution": [],
+                    "timeline": [],
+                    "external_views": [],
+                }
+
+        class FakeImageProvider:
+            def discover(self, person_name, reference_urls, limit=4):
+                return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = create_app(
+                str(root / "publicmind.db"),
+                str(root / "exports"),
+                llm_provider=FakeLLMProvider(),
+                image_provider=FakeImageProvider(),
+                connector_registry=ConnectorRegistry([FakeConnector()]),
+            )
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "测试人物"}).json()
+                source_url = "https://example.com/latest-interview"
+                started = client.post(
+                    "/api/persons/%s/refresh" % person["id"],
+                    json={"urls": [source_url], "language_mode": "zh"},
+                )
+                self.assertEqual(started.status_code, 200)
+                job = client.get("/api/build-jobs/%s" % started.json()["id"]).json()
+                self.assertEqual(job["status"], "completed")
+                report = client.get("/api/persons/%s/report" % person["id"]).json()["content"]
+                self.assertEqual(report["overview"], "档案已根据最新访谈更新。")
+                self.assertTrue(any(item["url"] == source_url for item in report["public_sources"]))
+
     def test_question_gap_triggers_targeted_search_and_persists_new_source(self):
         search_queries = []
 

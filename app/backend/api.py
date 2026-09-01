@@ -80,6 +80,18 @@ def _public_platform(url: str, source_role: str = "unclassified") -> str:
         return "知乎"
     if host == "weibo.com":
         return "微博"
+    if host == "xiaohongshu.com":
+        return "小红书"
+    if host == "mp.weixin.qq.com":
+        return "微信公众号"
+    if host == "channels.weixin.qq.com":
+        return "视频号"
+    if host == "baike.baidu.com":
+        return "百度百科"
+    if host == "baidu.com" or host.endswith(".baidu.com"):
+        return "百度"
+    if host == "douyin.com" or host.endswith(".douyin.com"):
+        return "抖音"
     if host == "linkedin.com":
         return "LinkedIn"
     if source_role == "subject_official":
@@ -719,6 +731,7 @@ def create_app(
         confirmed_source_url: Optional[str],
         use_existing_candidates: bool,
         language_mode: str,
+        refresh_source_urls: Optional[List[str]] = None,
     ) -> None:
         with Repository(db) as repository:
             try:
@@ -727,7 +740,7 @@ def create_app(
                     raise ValueError("人物不存在")
                 repository.update_build_job(job_id, "running", "正在检索公开资料", 0.08)
                 candidates = repository.list_candidates(person_id) if use_existing_candidates else []
-                if not candidates:
+                if not candidates and not refresh_source_urls:
                     candidates = DiscoveryService(
                         repository,
                         current_search_provider(),
@@ -744,7 +757,12 @@ def create_app(
                     if candidate.id:
                         repository.decide_candidate(candidate.id, "accepted")
 
-                sources = repository.list_sources(person_id)[:12]
+                all_sources = repository.list_sources(person_id)
+                if refresh_source_urls:
+                    refresh_urls = set(refresh_source_urls)
+                    sources = [source for source in all_sources if source.url in refresh_urls]
+                else:
+                    sources = all_sources[:12]
                 if not sources:
                     raise SearchProviderError("没有找到可用于建库的公开资料，请补充身份线索后重试")
                 succeeded = 0
@@ -769,6 +787,7 @@ def create_app(
                 if not documents:
                     raise RuntimeError("找到了一些网址，但都未能读取正文；请稍后重试或补充公开网址")
                 repository.update_build_job(job_id, "running", "正在整理人物经历与观点", 0.74)
+                previous_report = repository.get_report(person_id)
                 report_content = ProfileBuilder(current_llm_provider()).build(
                     person,
                     repository.list_sources(person_id),
@@ -786,7 +805,14 @@ def create_app(
                     }
                     for document in documents
                 ]
-                report_content["images"] = discover_person_images(repository, person_id)
+                previous_images = (
+                    previous_report.content.get("images", []) if previous_report else []
+                )
+                report_content["images"] = (
+                    previous_images
+                    if refresh_source_urls and previous_images
+                    else discover_person_images(repository, person_id)
+                )
                 report = repository.save_report(person_id, report_content)
                 repository.update_build_job(job_id, "running", "正在生成 Obsidian 知识库", 0.92)
                 _, archive_path = VaultExporter(exports).export(
@@ -830,6 +856,57 @@ def create_app(
             confirmed_source_url,
             use_existing_candidates,
             language_mode,
+        )
+        return {
+            "id": job.id,
+            "person_id": job.person_id,
+            "status": job.status,
+            "stage": job.stage,
+            "progress": job.progress,
+        }
+
+    @app.post("/api/persons/{person_id}/refresh")
+    def refresh_person(
+        person_id: str, payload: Dict[str, Any], background_tasks: BackgroundTasks
+    ) -> Dict[str, Any]:
+        raw_urls = payload.get("urls", [])
+        if not isinstance(raw_urls, list):
+            raise HTTPException(status_code=422, detail="信息源网址格式不正确")
+        urls: List[str] = []
+        for raw_url in raw_urls[:8]:
+            url = str(raw_url).strip()
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=422, detail="需要公开的 http(s) 网址")
+            if url not in urls:
+                urls.append(url)
+        if not urls:
+            raise HTTPException(status_code=422, detail="请至少添加一个信息源网址")
+        with Repository(db) as repository:
+            person = repository.get_person(person_id)
+            if not person:
+                raise HTTPException(status_code=404, detail="人物不存在")
+            previous_report = repository.get_report(person_id)
+            requested_language = str(payload.get("language_mode", "")).strip()
+            language_mode = requested_language or (
+                str(previous_report.content.get("language_mode", "zh"))
+                if previous_report
+                else "zh"
+            )
+            if language_mode not in {"zh", "en", "bilingual"}:
+                raise HTTPException(status_code=422, detail="未知的输出语言")
+            for url in urls:
+                repository.add_source(person_id, url)
+            job = repository.create_build_job(person_id)
+        background_tasks.add_task(
+            build_person,
+            job.id or "",
+            person_id,
+            [],
+            None,
+            True,
+            language_mode,
+            urls,
         )
         return {
             "id": job.id,

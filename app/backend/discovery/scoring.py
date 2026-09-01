@@ -30,6 +30,10 @@ SOCIAL_HOSTS = {
     "weibo.com",
     "bilibili.com",
     "zhihu.com",
+    "xiaohongshu.com",
+    "mp.weixin.qq.com",
+    "channels.weixin.qq.com",
+    "douyin.com",
 }
 AGGREGATOR_MARKERS = ("转载", "转自", "摘编", "repost", "转载自", "聚合")
 INTERVIEW_MARKERS = ("访谈", "专访", "对话", "采访", "interview", "podcast", "问答")

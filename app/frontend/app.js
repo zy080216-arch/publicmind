@@ -12,6 +12,7 @@ const state = {
 
 const el = Object.fromEntries([
   "search-form", "search-button", "person-name", "identity-anchors", "language-mode",
+  "landing-page", "enter-workbench", "workbench-shell",
   "config-hint", "config-light", "identity-panel", "identity-platform", "identity-title",
   "identity-snippet", "identity-link", "preview-platforms", "identity-back", "identity-confirm",
   "manual-source-form", "manual-source-url", "manual-source-list", "progress-panel",
@@ -21,6 +22,7 @@ const el = Object.fromEntries([
   "result-external", "result-timeline", "portrait-section", "result-images", "download-link",
   "ask-form", "ask-question", "ask-button", "ask-status", "ask-answer", "ask-answer-meta",
   "ask-answer-text", "ask-answer-sources", "person-count", "person-list",
+  "dossier-source-form", "dossier-source-url", "dossier-source-button", "dossier-source-status",
   "settings-button", "settings-dialog", "settings-close", "settings-form", "brave-key",
   "deepseek-key", "saved-status", "notice",
 ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]));
@@ -80,10 +82,19 @@ function renderPeople() {
     const copy = node("div");
     copy.append(node("strong", "", person.name), node("small", "", person.overview || "人物知识档案"));
     const count = node("span", "", `${person.document_count || 0} 篇资料`);
+    const actions = node("div", "person-actions");
     const open = node("button", "", "打开档案 →");
     open.type = "button";
     open.addEventListener("click", () => openExisting(person));
-    row.append(copy, count, open);
+    const update = node("button", "", "补充资料 +");
+    update.type = "button";
+    update.addEventListener("click", async () => {
+      await openExisting(person);
+      el.dossier_source_url.focus();
+      el.dossier_source_form.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    actions.append(open, update);
+    row.append(copy, count, actions);
     el.person_list.append(row);
   });
 }
@@ -116,7 +127,7 @@ function renderManualSources() {
   el.manual_source_list.replaceChildren();
   state.manualSources.forEach((source) => {
     const item = node("div", "manual-source-item");
-    item.append(node("strong", "", "已加入"), node("span", "", source.url));
+    item.append(node("strong", "", source.draft ? "待加入" : "已加入"), node("span", "", source.url));
     el.manual_source_list.append(item);
   });
 }
@@ -141,10 +152,14 @@ async function searchIdentity(event) {
       method: "POST",
       body: JSON.stringify({ name, description: state.anchors.length ? `身份线索：${state.anchors.join("、")}` : null }),
     })).json();
+    state.manualSources = await Promise.all(state.manualSources.map(async (source) => {
+      return (await request(`/api/persons/${state.pendingPerson.id}/sources`, {
+        method: "POST", body: JSON.stringify({ url: source.url }),
+      })).json();
+    }));
     state.preview = await (await request(`/api/persons/${state.pendingPerson.id}/prepare`, {
       method: "POST", body: JSON.stringify({ anchors: state.anchors }),
     })).json();
-    state.manualSources = [];
     renderPreview();
   } catch (error) {
     notice(error.message, "error");
@@ -156,9 +171,19 @@ async function searchIdentity(event) {
 
 async function addManualSource(event) {
   event.preventDefault();
-  if (!state.pendingPerson) return;
   const url = el.manual_source_url.value.trim();
   if (!url) return;
+  if (state.manualSources.some((item) => item.url === url)) {
+    notice("这个网址已经加入。", "error");
+    return;
+  }
+  if (!state.pendingPerson) {
+    state.manualSources.push({ url, draft: true });
+    el.manual_source_url.value = "";
+    renderManualSources();
+    notice("网址已暂存，确认人物后会一起加入。", "info");
+    return;
+  }
   try {
     const source = await (await request(`/api/persons/${state.pendingPerson.id}/sources`, {
       method: "POST", body: JSON.stringify({ url }),
@@ -168,6 +193,16 @@ async function addManualSource(event) {
     renderManualSources();
     notice("网址已加入。", "info");
   } catch (error) { notice(error.message, "error"); }
+}
+
+function enterWorkbench(target = ".hero") {
+  el.landing_page.hidden = true;
+  el.workbench_shell.hidden = false;
+  document.body.classList.add("workbench-visible");
+  window.requestAnimationFrame(() => {
+    const destination = document.querySelector(target) || document.querySelector(".hero");
+    destination.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 function updateProgress(job) {
@@ -277,6 +312,7 @@ function renderReport(report, downloadUrl = null, personId = null) {
   const content = report.content || report;
   const resolvedPersonId = personId || report.person_id || null;
   state.activePersonId = resolvedPersonId;
+  el.dossier_source_status.textContent = "";
   const languageLabels = { zh: "中文", en: "English", bilingual: "中英双语" };
   el.result_title.textContent = (content.title || "人物档案").replace(/\s*人物全景\s*$/, "");
   el.result_language.textContent = languageLabels[content.language_mode] || languageLabels.zh;
@@ -335,6 +371,41 @@ function renderReport(report, downloadUrl = null, personId = null) {
   else if (personId) { el.download_link.href = "#"; el.download_link.onclick = (event) => downloadExisting(event, personId); }
   el.result_panel.hidden = false;
   el.result_panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function refreshDossier(event) {
+  event.preventDefault();
+  const url = el.dossier_source_url.value.trim();
+  if (!url || !state.activePersonId) return;
+  if (!state.config?.llm_configured) {
+    el.settings_dialog.showModal();
+    notice("连接 DeepSeek 后即可重新整理档案。", "error");
+    return;
+  }
+  const person = state.people.find((item) => item.id === state.activePersonId);
+  state.pendingPerson = person || { id: state.activePersonId, name: el.result_title.textContent };
+  el.dossier_source_button.disabled = true;
+  el.dossier_source_status.textContent = "正在读取新资料并重新整理整份档案…";
+  el.result_panel.hidden = true;
+  el.progress_panel.hidden = false;
+  updateProgress({ progress: 0, stage: "准备补充最新资料", status: "queued" });
+  el.progress_panel.scrollIntoView({ behavior: "smooth", block: "center" });
+  try {
+    const job = await (await request(`/api/persons/${state.activePersonId}/refresh`, {
+      method: "POST",
+      body: JSON.stringify({ urls: [url] }),
+    })).json();
+    await pollJob(job.id);
+    el.dossier_source_url.value = "";
+    el.dossier_source_status.textContent = "已加入新资料并更新档案。";
+  } catch (error) {
+    el.progress_panel.hidden = true;
+    el.result_panel.hidden = false;
+    el.dossier_source_status.textContent = error.message;
+    notice(error.message, "error");
+  } finally {
+    el.dossier_source_button.disabled = false;
+  }
 }
 
 async function askKnowledgeBase(event) {
@@ -415,7 +486,30 @@ async function saveSettings(event) {
 }
 
 el.search_form.addEventListener("submit", searchIdentity);
+el.person_name.addEventListener("input", () => {
+  if (!state.pendingPerson || el.person_name.value.trim() === state.pendingPerson.name) return;
+  state.pendingPerson = null;
+  state.preview = null;
+  state.manualSources = [];
+  renderManualSources();
+});
 el.manual_source_form.addEventListener("submit", addManualSource);
+el.dossier_source_form.addEventListener("submit", refreshDossier);
+el.enter_workbench.addEventListener("click", () => enterWorkbench());
+document.querySelectorAll('.site-nav a[href="#search-form"], .site-nav a[href="#recent-title"]').forEach((link) => {
+  link.addEventListener("click", (event) => {
+    if (!el.workbench_shell.hidden) return;
+    event.preventDefault();
+    enterWorkbench(link.getAttribute("href"));
+  });
+});
+document.querySelector('.site-nav a[href="#landing-page"]').addEventListener("click", (event) => {
+  event.preventDefault();
+  el.workbench_shell.hidden = true;
+  el.landing_page.hidden = false;
+  document.body.classList.remove("workbench-visible");
+  el.landing_page.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 el.identity_confirm.addEventListener("click", confirmIdentity);
 el.identity_back.addEventListener("click", () => { el.identity_panel.hidden = true; document.querySelector(".hero").scrollIntoView({ behavior: "smooth" }); });
 el.settings_button.addEventListener("click", () => el.settings_dialog.showModal());

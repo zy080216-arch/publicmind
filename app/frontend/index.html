@@ -14,11 +14,31 @@
     <a class="skip-link" href="#main">跳到内容</a>
     <header class="site-header">
       <a class="brand" href="/" aria-label="PublicMind 首页"><span class="brand-mark" aria-hidden="true">P</span><strong>publicmind</strong></a>
-      <nav class="site-nav" aria-label="主导航"><a href="#search-form">建立档案</a><a href="#hero-guide">怎么输出</a><a href="#recent-title">人物库</a></nav>
+      <nav class="site-nav" aria-label="主导航"><a href="#landing-page">产品介绍</a><a href="#search-form">建立档案</a><a href="#recent-title">人物库</a></nav>
       <div class="header-actions"><span id="config-hint" class="config-hint">设置 API</span><button id="settings-button" class="settings-button" type="button" aria-label="API 设置" aria-haspopup="dialog"><span>API 设置</span><span id="config-light" class="config-light"></span></button></div>
     </header>
 
     <main id="main">
+      <section id="landing-page" class="landing-page" aria-labelledby="landing-title" data-capabilities-version="2026-09-02">
+        <svg class="landing-wave" viewBox="0 0 1200 720" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
+          <defs><linearGradient id="landing-gradient" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#725cff" stop-opacity="0" /><stop offset=".35" stop-color="#7147ff" stop-opacity=".76" /><stop offset=".6" stop-color="#d500d8" /><stop offset=".78" stop-color="#ff4d00" /><stop offset="1" stop-color="#ff7a22" stop-opacity="0" /></linearGradient></defs>
+          <path d="M-80 720 C220 650 405 510 590 350 C790 176 970 54 1280 -20 C1000 128 830 300 620 430 C405 565 220 710 -80 780 Z" fill="url(#landing-gradient)" />
+        </svg>
+        <div class="landing-intro reveal">
+          <p class="landing-kicker">PUBLICMIND</p>
+          <h1 id="landing-title">从一个名字，<br />抵达一个人的思想世界。</h1>
+          <p class="landing-lead">检索公开网页，确认人物身份，整理他做过的事与长期观点。你得到的是一份可阅读、可追问、可持续补充的人物档案。</p>
+          <button id="enter-workbench" class="enter-workbench" type="button">进入人物研究台 <span>→</span></button>
+        </div>
+        <div class="landing-capabilities reveal" aria-label="产品能力">
+          <section><span>01</span><h2>如何使用</h2><p>输入姓名与身份线索，先打开关键主页确认人物，再开始整理。你也可以在检索前后补充自己的网址。</p></section>
+          <section><span>02</span><h2>呈现结果</h2><p>网页档案包含公开主页、人物影像、经历、观点、外界评价与时间线，并支持针对人物继续问询。</p></section>
+          <section><span>03</span><h2>使用工具</h2><p>Brave Search 检索公开网页，Wikipedia 与 Wikimedia 提供身份和影像基线，DeepSeek 整理档案并回答问题。</p></section>
+          <section><span>04</span><h2>带走资料</h2><p>所有原始来源保留可跳转网址；需要时可下载互相链接的 Markdown 知识库，在 Obsidian 中继续使用。</p></section>
+        </div>
+      </section>
+
+      <div id="workbench-shell" hidden>
       <section class="hero" aria-labelledby="page-title">
         <svg class="mind-wave" viewBox="0 0 1200 720" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
           <defs>
@@ -33,7 +53,7 @@
           <p class="hero-eyebrow">PUBLICMIND · 人物研究台</p>
           <h1 id="page-title"><span>输入一个名字，</span><span>读懂一个人。</span></h1>
           <p class="hero-deck">从公开主页、文章、访谈、视频和媒体报道中，整理一个人的经历、做过的事与长期观点。</p>
-          <div id="hero-guide" class="hero-deliverables" aria-label="输出内容"><span class="hero-deliverables-label">一次搜索，得到</span><span>人物档案</span><span>观点脉络</span><span>原始资料网址</span><span>Obsidian 知识库包（Markdown）</span></div>
+          <div class="hero-deliverables" aria-label="输出内容"><span class="hero-deliverables-label">一次搜索，得到</span><span>人物档案</span><span>观点脉络</span><span>原始资料网址</span><span>Obsidian 知识库包（Markdown）</span></div>
         </div>
         <form id="search-form" class="build-form">
           <label class="search-field name-field" for="person-name"><span>人物姓名</span><input id="person-name" name="name" type="text" placeholder="例如：Sam Altman" autocomplete="off" required /></label>
@@ -41,6 +61,11 @@
           <label class="search-field language-field" for="language-mode"><span>档案语言</span><select id="language-mode" name="language_mode"><option value="zh" selected>中文</option><option value="en">English</option><option value="bilingual">双语</option></select></label>
           <button id="search-button" class="build-button" type="submit"><span>开始建立</span><i aria-hidden="true">→</i></button>
         </form>
+        <div class="manual-source-block">
+          <div><h3>补充信息源</h3><p>可先添加，也可在建档后继续更新。</p></div>
+          <form id="manual-source-form"><label class="sr-only" for="manual-source-url">公开信息源网址</label><input id="manual-source-url" type="url" placeholder="粘贴个人主页、文章、访谈或视频网址" required /><button type="submit">添加 →</button></form>
+          <div id="manual-source-list" class="manual-source-list"></div>
+        </div>
         <a class="scroll-cue" href="#recent-title" aria-label="查看已完成人物">⌄</a>
       </section>
 
@@ -48,7 +73,6 @@
         <div class="panel-heading"><p>是这个人吗？</p><button id="identity-back" class="circle-back" type="button" aria-label="返回修改">←</button></div>
         <article class="primary-identity-source"><span class="source-platform" id="identity-platform">主页</span><div class="identity-source-copy"><h2 id="identity-title"></h2><p id="identity-snippet"></p><a id="identity-link" href="#" target="_blank" rel="noopener noreferrer">打开确认 ↗</a></div></article>
         <div id="preview-platforms" class="preview-platforms"></div>
-        <div class="manual-source-block"><h3>补充信息源</h3><form id="manual-source-form"><label class="sr-only" for="manual-source-url">公开信息源网址</label><input id="manual-source-url" type="url" placeholder="粘贴个人主页、文章、访谈或视频网址" required /><button type="submit">添加</button></form><div id="manual-source-list" class="manual-source-list"></div></div>
         <div class="identity-actions"><button id="identity-confirm" class="confirm-action" type="button">就是他 <span>→</span></button></div>
       </section>
 
@@ -59,7 +83,7 @@
       <article id="result-panel" class="dossier" hidden>
         <header class="dossier-header reveal"><div><span>人物档案</span><h2 id="result-title">人物全景</h2></div><div class="dossier-tools"><span id="result-language"></span><a id="download-link" href="#">下载 Obsidian ↘</a></div></header>
         <nav class="dossier-nav" aria-label="档案目录"><a href="#source-section">信息源</a><a href="#portrait-section">影像</a><a href="#overview-section">概览</a><a href="#work-section">经历</a><a href="#viewpoints-section">观点</a><a href="#ask-section">问询</a><a href="#timeline-section">时间线</a></nav>
-        <section id="source-section" class="dossier-section source-board reveal" aria-labelledby="source-board-title"><div class="section-content"><h3 id="source-board-title">公开主页与信息源</h3><div id="result-profiles" class="profile-grid"></div><div id="result-sources" class="collected-sources"></div></div></section>
+        <section id="source-section" class="dossier-section source-board reveal" aria-labelledby="source-board-title"><div class="section-content"><div class="source-board-heading"><h3 id="source-board-title">公开主页与信息源</h3><form id="dossier-source-form" class="dossier-source-form"><label for="dossier-source-url">更新这份档案</label><div><input id="dossier-source-url" type="url" placeholder="添加最新主页、文章、访谈或视频网址" required /><button id="dossier-source-button" type="submit">补充并重新整理</button></div><span id="dossier-source-status"></span></form></div><div id="result-profiles" class="profile-grid"></div><div id="result-sources" class="collected-sources"></div></div></section>
         <section id="portrait-section" class="portrait-section reveal" hidden aria-labelledby="portrait-title"><div class="portrait-intro"><h3 id="portrait-title">人物影像</h3></div><div id="result-images" class="portrait-grid"></div></section>
         <section id="overview-section" class="dossier-section overview-section reveal"><div class="section-content"><h3>概览</h3><p id="result-overview" class="lead-copy"></p><ul id="result-identity" class="identity-list"></ul></div></section>
         <section id="work-section" class="dossier-section reveal"><div class="section-content"><h3>做过什么</h3><div id="result-accomplishments" class="accomplishment-grid"></div></div></section>
@@ -70,6 +94,7 @@
       </article>
 
       <section class="recent-section reveal" aria-labelledby="recent-title"><div class="section-heading"><h2 id="recent-title">已完成</h2><span id="person-count">0</span></div><div id="person-list" class="person-list"><p class="empty-state">还没有人物档案。</p></div></section>
+      </div>
     </main>
 
     <dialog id="settings-dialog" class="settings-dialog"><form id="settings-form" method="dialog"><div class="dialog-heading"><div><h2>API 设置</h2><p>Brave Search 负责检索，DeepSeek 负责整理和问询。Key 只保存在本机。</p></div><button id="settings-close" class="close-button" type="button" aria-label="关闭">×</button></div><label for="brave-key">Brave Search<input id="brave-key" name="brave_api_key" type="password" autocomplete="off" placeholder="API Key" /></label><a class="key-help" href="https://api-dashboard.search.brave.com/app/keys" target="_blank" rel="noopener noreferrer">获取 Brave Key ↗</a><label for="deepseek-key">DeepSeek<input id="deepseek-key" name="deepseek_api_key" type="password" autocomplete="off" placeholder="API Key" /></label><a class="key-help" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">获取 DeepSeek Key ↗</a><div id="saved-status" class="saved-status"></div><button class="save-settings" type="submit">保存</button></form></dialog>
