@@ -7,6 +7,8 @@ const state = {
   anchors: [],
   languageMode: "zh",
   activePersonId: null,
+  manualEditingSource: null,
+  dossierEditingSource: null,
   noticeTimer: null,
 };
 
@@ -15,14 +17,14 @@ const el = Object.fromEntries([
   "landing-page", "enter-workbench", "workbench-shell",
   "config-hint", "config-light", "identity-panel", "identity-platform", "identity-title",
   "identity-snippet", "identity-link", "preview-platforms", "identity-canonical-name", "identity-back", "identity-confirm",
-  "manual-source-form", "manual-source-url", "manual-source-list", "progress-panel",
+  "manual-source-form", "manual-source-url", "manual-source-clear", "manual-source-submit", "manual-source-list", "progress-panel",
   "progress-person", "progress-percent", "progress-bar", "progress-stage", "result-panel",
   "result-title", "result-language", "result-profiles", "result-sources", "result-overview",
   "result-identity", "result-accomplishments", "result-viewpoints", "result-evolution",
   "result-external", "result-timeline", "portrait-section", "result-images", "download-link",
   "ask-form", "ask-question", "ask-button", "ask-status", "ask-answer", "ask-answer-meta",
   "ask-answer-text", "ask-answer-sources", "person-count", "person-list",
-  "dossier-source-form", "dossier-source-url", "dossier-source-button", "dossier-source-status",
+  "dossier-source-form", "dossier-source-url", "dossier-source-clear", "dossier-source-button", "dossier-source-status",
   "settings-button", "settings-dialog", "settings-close", "settings-form", "brave-key",
   "deepseek-key", "saved-status", "notice",
 ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]));
@@ -45,6 +47,27 @@ function node(tag, className, text) {
   if (className) item.className = className;
   if (text !== undefined) item.textContent = text;
   return item;
+}
+
+function confirmSourceRemoval(actions, onConfirm) {
+  const original = [...actions.childNodes];
+  const question = node("span", "source-remove-question", "确定移除？");
+  const confirm = node("button", "source-remove-confirm", "确定移除");
+  confirm.type = "button";
+  const cancel = node("button", "source-remove-cancel", "取消");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => actions.replaceChildren(...original));
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true;
+    cancel.disabled = true;
+    try {
+      await onConfirm();
+    } catch (error) {
+      actions.replaceChildren(...original);
+      notice(error.message, "error");
+    }
+  });
+  actions.replaceChildren(question, confirm, cancel);
 }
 
 function notice(message, type = "info") {
@@ -129,11 +152,49 @@ function renderPreview() {
 
 function renderManualSources() {
   el.manual_source_list.replaceChildren();
-  state.manualSources.forEach((source) => {
+  state.manualSources.forEach((source, index) => {
     const item = node("div", "manual-source-item");
-    item.append(node("strong", "", source.draft ? "待加入" : "已加入"), node("span", "", source.url));
+    item.classList.toggle("is-editing", state.manualEditingSource === source);
+    const copy = node("div", "manual-source-copy");
+    copy.append(node("strong", "", source.draft ? "待加入" : "已加入"), node("span", "", source.url));
+    const actions = node("div", "manual-source-actions");
+    const reedit = node("button", "", "重新填写");
+    reedit.type = "button";
+    reedit.addEventListener("click", () => beginManualSourceEdit(source));
+    const remove = node("button", "", "移除");
+    remove.type = "button";
+    remove.addEventListener("click", () => confirmSourceRemoval(actions, () => removeManualSource(index)));
+    actions.append(reedit, remove);
+    item.append(copy, actions);
     el.manual_source_list.append(item);
   });
+}
+
+function resetManualSourceEditor() {
+  state.manualEditingSource = null;
+  el.manual_source_url.value = "";
+  el.manual_source_clear.textContent = "清空";
+  el.manual_source_submit.innerHTML = "添加信息源 <span>+</span>";
+  renderManualSources();
+}
+
+function beginManualSourceEdit(source) {
+  state.manualEditingSource = source;
+  el.manual_source_url.value = source.url;
+  el.manual_source_clear.textContent = "取消修改";
+  el.manual_source_submit.innerHTML = "保存修改 <span>→</span>";
+  el.manual_source_url.focus();
+  renderManualSources();
+}
+
+async function removeManualSource(index) {
+  const source = state.manualSources[index];
+  if (!source) return;
+  if (source.id) await request(`/api/sources/${source.id}`, { method: "DELETE" });
+  state.manualSources.splice(index, 1);
+  if (state.manualEditingSource === source) resetManualSourceEditor();
+  else renderManualSources();
+  notice("信息源已移除。", "info");
 }
 
 async function searchIdentity(event) {
@@ -177,8 +238,24 @@ async function addManualSource(event) {
   event.preventDefault();
   const url = el.manual_source_url.value.trim();
   if (!url) return;
-  if (state.manualSources.some((item) => item.url === url)) {
+  const editing = state.manualEditingSource;
+  if (state.manualSources.some((item) => item !== editing && item.url === url)) {
     notice("这个网址已经加入。", "error");
+    return;
+  }
+  if (editing) {
+    try {
+      if (editing.id) {
+        const updated = await (await request(`/api/sources/${editing.id}`, {
+          method: "PATCH", body: JSON.stringify({ url }),
+        })).json();
+        Object.assign(editing, updated);
+      } else {
+        editing.url = url;
+      }
+      resetManualSourceEditor();
+      notice("网址修改已保存。", "info");
+    } catch (error) { notice(error.message, "error"); }
     return;
   }
   if (!state.pendingPerson) {
@@ -319,6 +396,10 @@ function renderReport(report, downloadUrl = null, personId = null) {
   const content = report.content || report;
   const resolvedPersonId = personId || report.person_id || null;
   state.activePersonId = resolvedPersonId;
+  state.dossierEditingSource = null;
+  el.dossier_source_url.value = "";
+  el.dossier_source_clear.textContent = "清空";
+  el.dossier_source_button.innerHTML = "添加并更新 <span>→</span>";
   el.dossier_source_status.textContent = "";
   const languageLabels = { zh: "中文", en: "English", bilingual: "中英双语" };
   el.result_title.textContent = (content.title || "人物档案").replace(/\s*人物全景\s*$/, "");
@@ -339,13 +420,41 @@ function renderReport(report, downloadUrl = null, personId = null) {
     link.append(node("small", "", item.platform), node("strong", "", item.title || item.url));
     return link;
   });
-  const profileUrls = new Set((content.public_profiles || []).map((item) => item.url));
-  const sourceItems = (content.public_sources || []).filter((item) => !profileUrls.has(item.url));
+  // Keep every ingested URL in this list even when it also has a profile card;
+  // this is the single place where users can correct or remove stored sources.
+  const sourceItems = content.public_sources || [];
   fillList(el.result_sources, sourceItems, "没有其他收录资料。", (item) => {
     const row = node("div", "source-row");
     row.append(node("span", "", item.platform || "公开资料"), node("strong", "", item.title));
+    const actions = node("div", "source-row-actions");
     const link = node("a", "", "打开原文 ↗"); link.href = item.url; link.target = "_blank"; link.rel = "noopener noreferrer";
-    row.append(link); return row;
+    actions.append(link);
+    if (item.source_id) {
+      const reedit = node("button", "", "重新填写");
+      reedit.type = "button";
+      reedit.addEventListener("click", () => {
+        state.dossierEditingSource = item;
+        el.dossier_source_url.value = item.url;
+        el.dossier_source_clear.textContent = "取消修改";
+        el.dossier_source_button.innerHTML = "保存并重新整理 <span>→</span>";
+        el.dossier_source_url.focus();
+        el.dossier_source_form.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      const remove = node("button", "", "移除");
+      remove.type = "button";
+      remove.addEventListener("click", () => {
+        confirmSourceRemoval(actions, async () => {
+          await request(`/api/sources/${item.source_id}`, { method: "DELETE" });
+          row.remove();
+          [...el.result_profiles.querySelectorAll("a")].forEach((profile) => {
+            if (profile.href === new URL(item.url, window.location.href).href) profile.remove();
+          });
+          notice("来源及其正文已移除。补充正确网址后重新整理即可更新结论。", "info");
+        });
+      });
+      actions.append(reedit, remove);
+    }
+    row.append(actions); return row;
   });
   fillList(el.result_identity, content.identity, "现有资料没有形成独立身份条目。", (item) => node("li", "", item));
   fillList(el.result_accomplishments, content.accomplishments, "现有资料不足以列出明确事项。", (item) => {
@@ -398,12 +507,20 @@ async function refreshDossier(event) {
   updateProgress({ progress: 0, stage: "准备补充最新资料", status: "queued" });
   el.progress_panel.scrollIntoView({ behavior: "smooth", block: "center" });
   try {
+    if (state.dossierEditingSource) {
+      await request(`/api/sources/${state.dossierEditingSource.source_id}`, {
+        method: "PATCH", body: JSON.stringify({ url }),
+      });
+    }
     const job = await (await request(`/api/persons/${state.activePersonId}/refresh`, {
       method: "POST",
       body: JSON.stringify({ urls: [url] }),
     })).json();
     await pollJob(job.id);
     el.dossier_source_url.value = "";
+    state.dossierEditingSource = null;
+    el.dossier_source_clear.textContent = "清空";
+    el.dossier_source_button.innerHTML = "添加并更新 <span>→</span>";
     el.dossier_source_status.textContent = "已加入新资料并更新档案。";
   } catch (error) {
     el.progress_panel.hidden = true;
@@ -501,7 +618,15 @@ el.person_name.addEventListener("input", () => {
   renderManualSources();
 });
 el.manual_source_form.addEventListener("submit", addManualSource);
+el.manual_source_clear.addEventListener("click", () => { resetManualSourceEditor(); el.manual_source_url.focus(); });
 el.dossier_source_form.addEventListener("submit", refreshDossier);
+el.dossier_source_clear.addEventListener("click", () => {
+  state.dossierEditingSource = null;
+  el.dossier_source_url.value = "";
+  el.dossier_source_clear.textContent = "清空";
+  el.dossier_source_button.innerHTML = "添加并更新 <span>→</span>";
+  el.dossier_source_url.focus();
+});
 el.enter_workbench.addEventListener("click", () => enterWorkbench());
 document.querySelectorAll('.site-nav a[href="#search-form"], .site-nav a[href="#recent-title"]').forEach((link) => {
   link.addEventListener("click", (event) => {

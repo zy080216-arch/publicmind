@@ -19,6 +19,12 @@ class StoreTests(unittest.TestCase):
         repository.update_source_status(source.id, "fetching")
         stored = repository.get_source(source.id)
         self.assertEqual(stored.status, "fetching")
+        updated = repository.update_source_url(source.id, "https://example.com/corrected")
+        self.assertEqual(updated.url, "https://example.com/corrected")
+        self.assertEqual(updated.status, "pending")
+        removed = repository.delete_source(source.id)
+        self.assertEqual(removed.id, source.id)
+        self.assertIsNone(repository.get_source(source.id))
         repository.close()
 
 

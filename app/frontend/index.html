@@ -7,9 +7,9 @@
     <meta name="description" content="输入一个名字，建立完整的人物知识档案。" />
     <title>PublicMind</title>
     <script>if (window.location.protocol === "file:") window.location.replace("http://127.0.0.1:8000/");</script>
-    <link rel="icon" href="/assets/favicon.svg?v=20260902-4" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20260902-4" />
-    <script src="/assets/app.js?v=20260902-4" defer></script>
+    <link rel="icon" href="/assets/favicon.svg?v=20260902-6" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260902-6" />
+    <script src="/assets/app.js?v=20260902-6" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到内容</a>
@@ -32,7 +32,7 @@
           <button id="enter-workbench" class="enter-workbench" type="button">进入人物研究台 <span>→</span></button>
         </div>
         <div class="landing-capabilities reveal" aria-label="产品能力">
-          <section><span>01</span><h2>如何使用</h2><p>输入姓名与身份线索，先打开关键主页确认人物；确认后会按资料修正姓名。你也可以在检索前后补充自己的网址。</p></section>
+          <section><span>01</span><h2>如何使用</h2><p>输入姓名与身份线索，先打开关键主页确认人物；确认后会按资料修正姓名。补充的网址随时可以重新填写或移除。</p></section>
           <section><span>02</span><h2>呈现结果</h2><p>网页档案包含公开主页、人物影像、经历、观点、外界评价与时间线，并支持针对人物继续问询。</p></section>
           <section><span>03</span><h2>使用工具</h2><p>Brave Search 检索公开网页，Wikipedia 与 Wikimedia 提供身份和影像基线，DeepSeek 整理档案并回答问题。</p></section>
           <section><span>04</span><h2>带走资料</h2><p>所有原始来源保留可跳转网址；需要时可下载互相链接的 Markdown 知识库，在 Obsidian 中继续使用。</p></section>
@@ -65,7 +65,7 @@
           </form>
           <div class="manual-source-block">
             <div><h3>带上你找到的信息源</h3><p>主页、文章、访谈和视频都可以；系统检索时会一并阅读。</p></div>
-            <form id="manual-source-form"><label class="sr-only" for="manual-source-url">公开信息源网址</label><input id="manual-source-url" type="url" placeholder="粘贴公开网址" required /><button type="submit">添加信息源 <span>+</span></button></form>
+            <form id="manual-source-form"><label class="sr-only" for="manual-source-url">公开信息源网址</label><input id="manual-source-url" type="url" placeholder="粘贴公开网址" required /><button id="manual-source-clear" class="clear-source-input" type="button">清空</button><button id="manual-source-submit" type="submit">添加信息源 <span>+</span></button></form>
             <div id="manual-source-list" class="manual-source-list"></div>
           </div>
         </div>
@@ -87,7 +87,7 @@
       <article id="result-panel" class="dossier" hidden>
         <header class="dossier-header reveal"><div><span>人物档案</span><h2 id="result-title">人物全景</h2></div><div class="dossier-tools"><span id="result-language"></span><a id="download-link" href="#">下载 Obsidian ↘</a></div></header>
         <nav class="dossier-nav" aria-label="档案目录"><a href="#source-section">信息源</a><a href="#portrait-section">影像</a><a href="#overview-section">概览</a><a href="#work-section">经历</a><a href="#viewpoints-section">观点</a><a href="#ask-section">问询</a><a href="#timeline-section">时间线</a></nav>
-        <section id="source-section" class="dossier-section source-board reveal" aria-labelledby="source-board-title"><div class="section-content"><div class="source-board-heading"><h3 id="source-board-title">公开主页与信息源</h3><form id="dossier-source-form" class="dossier-source-form"><div class="dossier-source-copy"><label for="dossier-source-url">为这份档案补充新资料</label><p>加入最新主页、文章、访谈或视频，重新整理整份人物档案。</p></div><div class="dossier-source-control"><input id="dossier-source-url" type="url" placeholder="粘贴公开网址" required /><button id="dossier-source-button" type="submit">添加并更新 <span>→</span></button></div><span id="dossier-source-status"></span></form></div><div id="result-profiles" class="profile-grid"></div><div id="result-sources" class="collected-sources"></div></div></section>
+        <section id="source-section" class="dossier-section source-board reveal" aria-labelledby="source-board-title"><div class="section-content"><div class="source-board-heading"><h3 id="source-board-title">公开主页与信息源</h3><form id="dossier-source-form" class="dossier-source-form"><div class="dossier-source-copy"><label for="dossier-source-url">为这份档案补充新资料</label><p>加入最新主页、文章、访谈或视频，重新整理整份人物档案。</p></div><div class="dossier-source-control"><input id="dossier-source-url" type="url" placeholder="粘贴公开网址" required /><button id="dossier-source-clear" class="clear-source-input" type="button">清空</button><button id="dossier-source-button" type="submit">添加并更新 <span>→</span></button></div><span id="dossier-source-status"></span></form></div><div id="result-profiles" class="profile-grid"></div><div id="result-sources" class="collected-sources"></div></div></section>
         <section id="portrait-section" class="portrait-section reveal" hidden aria-labelledby="portrait-title"><div class="portrait-intro"><h3 id="portrait-title">人物影像</h3></div><div id="result-images" class="portrait-grid"></div></section>
         <section id="overview-section" class="dossier-section overview-section reveal"><div class="section-content"><h3>概览</h3><p id="result-overview" class="lead-copy"></p><ul id="result-identity" class="identity-list"></ul></div></section>
         <section id="work-section" class="dossier-section reveal"><div class="section-content"><h3>做过什么</h3><div id="result-accomplishments" class="accomplishment-grid"></div></div></section>

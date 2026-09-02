@@ -274,9 +274,13 @@ def create_app(
             enriched["public_profiles"] = _platform_links(
                 repository.list_candidates(person_id)
             )
+        source_ids = {
+            source.url: source.id for source in repository.list_sources(person_id)
+        }
         if not enriched.get("public_sources"):
             enriched["public_sources"] = [
                 {
+                    "source_id": document.source_id,
                     "title": document.title,
                     "url": document.source_url,
                     "platform": _public_platform(document.source_url),
@@ -284,6 +288,12 @@ def create_app(
                     "published_at": document.published_at or "",
                 }
                 for document in repository.list_documents(person_id)
+            ]
+        else:
+            enriched["public_sources"] = [
+                {**item, "source_id": source_ids.get(str(item.get("url", "")))}
+                for item in enriched["public_sources"]
+                if source_ids.get(str(item.get("url", "")))
             ]
         return enriched
 
@@ -480,6 +490,75 @@ def create_app(
                 }
                 for source in repository.list_sources(person_id)
             ]
+
+    @app.delete("/api/sources/{source_id}")
+    def delete_source(source_id: str) -> Dict[str, Any]:
+        with Repository(db) as repository:
+            source = repository.get_source(source_id)
+            if not source:
+                raise HTTPException(status_code=404, detail="信息源不存在")
+            repository.delete_source(source_id)
+            report = repository.get_report(source.person_id)
+            if report:
+                content = dict(report.content)
+                content["public_sources"] = [
+                    item
+                    for item in content.get("public_sources", [])
+                    if item.get("url") != source.url
+                ]
+                content["public_profiles"] = [
+                    item
+                    for item in content.get("public_profiles", [])
+                    if item.get("url") != source.url
+                ]
+                content["needs_rebuild"] = True
+                repository.save_report(source.person_id, content)
+            return {
+                "id": source.id,
+                "person_id": source.person_id,
+                "url": source.url,
+                "removed": True,
+                "report_needs_rebuild": bool(report),
+            }
+
+    @app.patch("/api/sources/{source_id}")
+    def update_source(source_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        url = str(payload.get("url", "")).strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise HTTPException(status_code=422, detail="需要填写公开的 http(s) 网址")
+        with Repository(db) as repository:
+            previous = repository.get_source(source_id)
+            if not previous:
+                raise HTTPException(status_code=404, detail="信息源不存在")
+            try:
+                source = repository.update_source_url(source_id, url)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            report = repository.get_report(previous.person_id)
+            if report:
+                content = dict(report.content)
+                content["public_sources"] = [
+                    item
+                    for item in content.get("public_sources", [])
+                    if item.get("url") != previous.url
+                ]
+                content["public_profiles"] = [
+                    item
+                    for item in content.get("public_profiles", [])
+                    if item.get("url") != previous.url
+                ]
+                content["needs_rebuild"] = True
+                repository.save_report(previous.person_id, content)
+            return {
+                "id": source.id,
+                "person_id": source.person_id,
+                "platform": source.platform,
+                "url": source.url,
+                "status": source.status,
+                "source_role": source.source_role,
+                "report_needs_rebuild": bool(report),
+            }
 
     @app.post("/api/persons/{person_id}/discover")
     def discover_sources(person_id: str, payload: Dict[str, Any]):

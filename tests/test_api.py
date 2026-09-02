@@ -119,6 +119,28 @@ class ApiTests(unittest.TestCase):
                 report = client.get("/api/persons/%s/report" % person["id"]).json()["content"]
                 self.assertEqual(report["overview"], "档案已根据最新访谈更新。")
                 self.assertTrue(any(item["url"] == source_url for item in report["public_sources"]))
+                source = client.get("/api/persons/%s/sources" % person["id"]).json()[0]
+                corrected_url = "https://example.com/corrected-interview"
+                corrected = client.patch(
+                    "/api/sources/%s" % source["id"], json={"url": corrected_url}
+                )
+                self.assertEqual(corrected.status_code, 200)
+                self.assertEqual(corrected.json()["url"], corrected_url)
+                self.assertTrue(corrected.json()["report_needs_rebuild"])
+                self.assertEqual(client.get("/api/persons/%s/documents" % person["id"]).json(), [])
+                refreshed_after_edit = client.post(
+                    "/api/persons/%s/refresh" % person["id"],
+                    json={"urls": [corrected_url], "language_mode": "zh"},
+                )
+                self.assertEqual(refreshed_after_edit.status_code, 200)
+                removed = client.delete("/api/sources/%s" % source["id"])
+                self.assertEqual(removed.status_code, 200)
+                self.assertTrue(removed.json()["report_needs_rebuild"])
+                self.assertEqual(client.get("/api/persons/%s/documents" % person["id"]).json(), [])
+                refreshed_report = client.get(
+                    "/api/persons/%s/report" % person["id"]
+                ).json()["content"]
+                self.assertEqual(refreshed_report["public_sources"], [])
 
     def test_question_gap_triggers_targeted_search_and_persists_new_source(self):
         search_queries = []

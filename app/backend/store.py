@@ -314,6 +314,38 @@ class Repository:
             source_role=row["source_role"],
         )
 
+    def delete_source(self, source_id: str) -> Optional[Source]:
+        source = self.get_source(source_id)
+        if not source:
+            return None
+        self.connection.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+        self.connection.execute(
+            "UPDATE persons SET updated_at = ? WHERE id = ?", (_now(), source.person_id)
+        )
+        self.connection.commit()
+        return source
+
+    def update_source_url(self, source_id: str, url: str) -> Optional[Source]:
+        source = self.get_source(source_id)
+        if not source:
+            return None
+        try:
+            # Material fetched from the previous URL must not survive an edit.
+            self.connection.execute("DELETE FROM documents WHERE source_id = ?", (source_id,))
+            self.connection.execute(
+                "UPDATE sources SET url = ?, platform = ?, status = 'pending', "
+                "last_crawled_at = NULL WHERE id = ?",
+                (url, platform_for_url(url), source_id),
+            )
+            self.connection.execute(
+                "UPDATE persons SET updated_at = ? WHERE id = ?", (_now(), source.person_id)
+            )
+            self.connection.commit()
+        except sqlite3.IntegrityError as exc:
+            self.connection.rollback()
+            raise ValueError("这个网址已经加入") from exc
+        return self.get_source(source_id)
+
     def list_sources(self, person_id: str) -> List[Source]:
         rows = self.connection.execute(
             "SELECT * FROM sources WHERE person_id = ? ORDER BY created_at", (person_id,)
