@@ -343,6 +343,13 @@ def create_app(
 
     app.mount("/assets", StaticFiles(directory=str(frontend_dir)), name="assets")
 
+    @app.middleware("http")
+    async def disable_frontend_asset_cache(request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(str(frontend_dir / "index.html"), media_type="text/html")

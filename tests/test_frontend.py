@@ -53,6 +53,8 @@ class FrontendTests(unittest.TestCase):
         self.assertIn("/assets/styles.css", html)
         self.assertIn("/assets/app.js", html)
         self.assertIn("/assets/favicon.svg", html)
+        self.assertIn('window.location.protocol === "file:"', html)
+        self.assertIn('window.location.replace("http://127.0.0.1:8000/")', html)
         self.assertIn("@media (max-width: 560px)", css)
         self.assertIn("prefers-reduced-motion", css)
         self.assertIn('request("/api/config")', javascript)
