@@ -11,6 +11,10 @@ class StoreTests(unittest.TestCase):
         people = repository.list_persons()
         self.assertEqual([person.id for person in people], [second.id, first.id])
 
+        corrected = repository.update_person_name(first.id, "First Person Corrected")
+        self.assertEqual(corrected.name, "First Person Corrected")
+        self.assertEqual(corrected.slug, "first-person-corrected")
+
         source = repository.add_source(first.id, "https://example.com/article")
         repository.update_source_status(source.id, "fetching")
         stored = repository.get_source(source.id)

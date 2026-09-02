@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -169,6 +170,24 @@ def _candidate_payload(candidate: SourceCandidate) -> Dict[str, Any]:
         if candidate.score >= 65
         else "low_confidence",
     }
+
+
+def _canonical_person_name(candidate: SourceCandidate, fallback: str) -> str:
+    title = candidate.title.strip()
+    if candidate.provider == "wikipedia" or _is_reference_source(candidate):
+        title = re.sub(r"\s*(?:—|–|\||:|-)\s*Wikipedia\s*$", "", title, flags=re.IGNORECASE)
+    else:
+        title = re.sub(r"\s*[（(]@[^)）]+[)）].*$", "", title)
+        title = re.sub(
+            r"\s*[—–|]\s*(X|Twitter|GitHub|LinkedIn|YouTube|微博|知乎|小红书).*$",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+    title = title.strip(" \t\r\n'\"“”‘’【】[]·•—–-|：:")
+    if 1 < len(title) <= 100 and not re.search(r"https?://", title, flags=re.IGNORECASE):
+        return title
+    return fallback.strip()
 
 
 def _claim_payload(claim: Claim, repository: Repository) -> Dict[str, Any]:
@@ -509,6 +528,7 @@ def create_app(
             return {
                 "person_id": person_id,
                 "name": person.name,
+                "canonical_name": _canonical_person_name(primary, person.name),
                 "primary_source": {
                     "candidate_id": primary.id,
                     "title": primary.title,
@@ -851,9 +871,14 @@ def create_app(
             raise HTTPException(status_code=422, detail="未知的输出语言")
         confirmed_source_url = str(payload.get("confirmed_source_url", "")).strip() or None
         use_existing_candidates = bool(payload.get("use_existing_candidates", False))
+        confirmed_name = str(payload.get("confirmed_name", "")).strip()
+        if len(confirmed_name) > 100:
+            raise HTTPException(status_code=422, detail="确认姓名过长")
         with Repository(db) as repository:
             if not repository.get_person(person_id):
                 raise HTTPException(status_code=404, detail="人物不存在")
+            if confirmed_name:
+                repository.update_person_name(person_id, confirmed_name)
             job = repository.create_build_job(person_id)
         background_tasks.add_task(
             build_person,

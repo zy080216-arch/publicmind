@@ -21,6 +21,32 @@ except ImportError:
 
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiTests(unittest.TestCase):
+    def test_confirmed_identity_name_replaces_mistyped_name(self):
+        class EmptySearchProvider:
+            name = "empty"
+
+            def search(self, query, count=10):
+                return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = create_app(
+                str(root / "publicmind.db"),
+                str(root / "exports"),
+                search_provider=EmptySearchProvider(),
+                reference_provider=EmptySearchProvider(),
+            )
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "Sam Altman】"}).json()
+                started = client.post(
+                    "/api/persons/%s/build" % person["id"],
+                    json={"confirmed_name": "Sam Altman", "use_existing_candidates": True},
+                )
+                self.assertEqual(started.status_code, 200)
+                corrected = client.get("/api/persons/%s" % person["id"]).json()
+                self.assertEqual(corrected["name"], "Sam Altman")
+                self.assertEqual(corrected["slug"], "sam-altman")
+
     def test_chinese_people_receive_domestic_source_queries(self):
         chinese_queries = DiscoveryService.queries(Person(name="雷军", slug="lei-jun"), ["小米"])
         joined = "\n".join(chinese_queries)
@@ -287,6 +313,7 @@ class ApiTests(unittest.TestCase):
                     "/api/persons/%s/prepare" % person["id"], json={"anchors": []}
                 ).json()
                 self.assertEqual(preview["primary_source"]["platform"], "Wikipedia")
+                self.assertEqual(preview["canonical_name"], "Rafael Nadal")
                 self.assertEqual(
                     preview["primary_source"]["url"],
                     "https://en.wikipedia.org/wiki/Rafael_Nadal",

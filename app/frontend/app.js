@@ -14,7 +14,7 @@ const el = Object.fromEntries([
   "search-form", "search-button", "person-name", "identity-anchors", "language-mode",
   "landing-page", "enter-workbench", "workbench-shell",
   "config-hint", "config-light", "identity-panel", "identity-platform", "identity-title",
-  "identity-snippet", "identity-link", "preview-platforms", "identity-back", "identity-confirm",
+  "identity-snippet", "identity-link", "preview-platforms", "identity-canonical-name", "identity-back", "identity-confirm",
   "manual-source-form", "manual-source-url", "manual-source-list", "progress-panel",
   "progress-person", "progress-percent", "progress-bar", "progress-stage", "result-panel",
   "result-title", "result-language", "result-profiles", "result-sources", "result-overview",
@@ -118,6 +118,10 @@ function renderPreview() {
     link.rel = "noopener noreferrer";
     el.preview_platforms.append(link);
   });
+  const canonicalName = state.preview.canonical_name || state.pendingPerson.name;
+  el.identity_canonical_name.textContent = canonicalName === state.pendingPerson.name
+    ? `档案姓名：${canonicalName}`
+    : `确认后将姓名修正为：${canonicalName}`;
   renderManualSources();
   el.identity_panel.hidden = false;
   el.identity_panel.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -226,6 +230,8 @@ async function confirmIdentity() {
     return;
   }
   el.identity_confirm.disabled = true;
+  const canonicalName = state.preview.canonical_name || state.pendingPerson.name;
+  state.pendingPerson.name = canonicalName;
   el.identity_panel.hidden = true;
   el.progress_panel.hidden = false;
   updateProgress({ progress: 0, stage: "身份已确认，准备开始", status: "queued" });
@@ -237,6 +243,7 @@ async function confirmIdentity() {
         anchors: state.anchors,
         language_mode: state.languageMode,
         confirmed_source_url: state.preview.primary_source.url,
+        confirmed_name: canonicalName,
         use_existing_candidates: true,
       }),
     })).json();

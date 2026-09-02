@@ -227,6 +227,28 @@ class Repository:
             return None
         return Person(id=row["id"], name=row["name"], slug=row["slug"], description=row["description"])
 
+    def update_person_name(self, person_id: str, name: str) -> Person:
+        person = self.get_person(person_id)
+        if not person:
+            raise ValueError("person not found")
+        clean_name = name.strip()
+        if not clean_name:
+            return person
+        base_slug = slugify(clean_name)
+        slug = base_slug
+        counter = 2
+        while self.connection.execute(
+            "SELECT 1 FROM persons WHERE slug = ? AND id != ?", (slug, person_id)
+        ).fetchone():
+            slug = "%s-%d" % (base_slug, counter)
+            counter += 1
+        self.connection.execute(
+            "UPDATE persons SET name = ?, slug = ?, updated_at = ? WHERE id = ?",
+            (clean_name, slug, _now(), person_id),
+        )
+        self.connection.commit()
+        return self.get_person(person_id)  # type: ignore[return-value]
+
     def list_persons(self) -> List[Person]:
         rows = self.connection.execute(
             "SELECT * FROM persons ORDER BY updated_at DESC, created_at DESC"
