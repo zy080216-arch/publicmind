@@ -94,6 +94,12 @@ export PUBLICMIND_LLM_MODEL="deepseek-v4-flash"
 
 项目当前兼容这台 Mac 的 Python 3.9，也支持更高版本。
 
+### macOS：以后双击启动
+
+完成下方首次安装后，直接双击项目中的 `启动 PublicMind.command`：它会在需要时启动本地服务并自动打开网页。网页使用期间保留弹出的终端窗口；关闭该窗口或按 `Control-C` 就会停止服务，不会让 PublicMind 长期占用内存。如果服务已经运行，启动文件只会打开网页，不会重复启动。
+
+### 首次安装
+
 ```bash
 git clone https://github.com/zy080216-arch/publicmind.git
 cd PublicMind
