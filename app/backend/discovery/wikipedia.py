@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -17,6 +19,22 @@ class WikipediaSearchProvider:
 
     def __init__(self, timeout: float = 12.0) -> None:
         self.timeout = timeout
+
+    @staticmethod
+    def _is_identity_match(query: str, title: str) -> bool:
+        def normalized(value: str) -> str:
+            value = unicodedata.normalize("NFKD", value).casefold()
+            return re.sub(r"[^\w]+", "", value, flags=re.UNICODE)
+
+        expected = normalized(query)
+        actual = normalized(title)
+        if not expected or not actual:
+            return False
+        if expected == actual or expected in actual:
+            return True
+        # Allow small spelling mistakes such as "rafa nadel" while rejecting
+        # unrelated autocomplete results such as "Tibo" -> "Time".
+        return len(expected) >= 6 and SequenceMatcher(None, expected, actual).ratio() >= 0.86
 
     def _search_language(self, language: str, query: str) -> List[SearchHit]:
         endpoint = "https://%s.wikipedia.org/w/api.php" % language
@@ -40,12 +58,14 @@ class WikipediaSearchProvider:
             results = payload.get("search", [])
             suggestion: Optional[str] = payload.get("searchinfo", {}).get("suggestion")
             if suggestion and suggestion.casefold() != current.casefold():
+                if not self._is_identity_match(current, suggestion):
+                    return []
                 current = suggestion
                 continue
             hits: List[SearchHit] = []
-            for item in results[:1]:
+            for item in results:
                 title = str(item.get("title", "")).strip()
-                if not title:
+                if not title or not self._is_identity_match(current, title):
                     continue
                 snippet = html.unescape(re.sub(r"<[^>]+>", "", str(item.get("snippet", ""))))
                 hits.append(
@@ -57,6 +77,7 @@ class WikipediaSearchProvider:
                         published_at=item.get("timestamp"),
                     )
                 )
+                break
             return hits
         return []
 

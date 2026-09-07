@@ -28,12 +28,24 @@ def validate_profile(raw: Dict[str, Any], allowed_urls: Iterable[str], person_na
         "title": str(raw.get("title") or "%s 人物全景" % person_name).strip(),
         "overview": str(raw.get("overview") or "").strip(),
         "identity": _strings(raw.get("identity")),
+        "biography": [],
         "accomplishments": [],
         "viewpoint_topics": [],
         "viewpoint_evolution": [],
         "timeline": [],
         "external_views": [],
     }
+    for item in raw.get("biography", []) if isinstance(raw.get("biography"), list) else []:
+        if not isinstance(item, dict) or not str(item.get("narrative", "")).strip():
+            continue
+        result["biography"].append(
+            {
+                "period": str(item.get("period", "时间不详")).strip(),
+                "title": str(item.get("title", "成长阶段")).strip(),
+                "narrative": str(item.get("narrative", "")).strip(),
+                "source_urls": _source_urls(item.get("source_urls"), allowed),
+            }
+        )
     for item in raw.get("accomplishments", []) if isinstance(raw.get("accomplishments"), list) else []:
         if not isinstance(item, dict) or not str(item.get("title", "")).strip():
             continue
@@ -135,6 +147,14 @@ class ProfileBuilder:
             "title": "%s 人物全景" % person.name,
             "overview": "两到四段人物概览",
             "identity": ["身份或经历要点"],
+            "biography": [
+                {
+                    "period": "成长或职业阶段",
+                    "title": "阶段标题",
+                    "narrative": "连贯说明成长背景、教育、职业转折、选择动因与这段经历如何影响后来道路",
+                    "source_urls": ["必须来自输入 URL"],
+                }
+            ],
             "accomplishments": [
                 {"title": "做过的事情", "description": "具体说明", "period": "时间", "source_urls": ["必须来自输入 URL"]}
             ],
@@ -162,7 +182,7 @@ class ProfileBuilder:
 身份备注：{description}
 输出语言：{language_instruction}
 
-请生成完整人物全景报告数据，重点覆盖“做过什么”和“主要观点”。合并重复信息；本人观点与媒体评价分开；只有资料明确支持时间差异时才写观点演变；资料没有支持的内容不要写。source_urls 只能逐字使用文档中的 URL。即使某一部分资料不足，也返回空数组。严格遵守下面的 JSON 结构：
+请生成完整人物全景报告数据，重点覆盖“人物生平”“做过什么”和“主要观点”。人物生平按成长阶段组织，优先写早年背景、教育、职业起点、关键转折、选择动因及这些经历如何塑造后来的道路；不要把它写成只有日期的时间线，也不要重复罗列成就。合并重复信息；本人观点与媒体评价分开；只有资料明确支持时间差异时才写观点演变；资料没有支持的内容不要写。source_urls 只能逐字使用文档中的 URL。即使某一部分资料不足，也返回空数组。严格遵守下面的 JSON 结构：
 {schema}
 
 资料：

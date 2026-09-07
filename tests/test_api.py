@@ -5,13 +5,13 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
-from app.backend.api import _public_platform, create_app
+from app.backend.api import _platform_links, _public_platform, create_app
 from app.backend.connectors import ConnectorRegistry, SourceConnector
 from app.backend.connectors.web import WebConnector
 from app.backend.discovery.base import SearchHit
 from app.backend.discovery.service import DiscoveryService
 from app.backend.discovery.wikipedia import WikipediaSearchProvider
-from app.backend.models import Person, RawDocument
+from app.backend.models import Person, RawDocument, SourceCandidate
 
 try:
     from fastapi.testclient import TestClient
@@ -21,6 +21,35 @@ except ImportError:
 
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiTests(unittest.TestCase):
+    def test_public_profile_links_exclude_posts_videos_and_rejected_candidates(self):
+        def candidate(url, title, status="accepted", role="unclassified", score=80):
+            return SourceCandidate(
+                person_id="person",
+                url=url,
+                title=title,
+                snippet="",
+                provider="fixture",
+                query="Tibo",
+                score=score,
+                source_role=role,
+                status=status,
+            )
+
+        links = _platform_links(
+            [
+                candidate("https://x.com/thsottiaux", "Tibo (@thsottiaux) / X"),
+                candidate("https://x.com/other/status/123", "Interview post"),
+                candidate("https://youtube.com/watch?v=123", "Interview video"),
+                candidate("https://zh.wikipedia.org/wiki/Time", "Time", status="rejected"),
+                candidate(
+                    "https://www.reddit.com/r/codex/comments/123/example",
+                    "Reddit discussion",
+                    role="subject_official",
+                ),
+            ]
+        )
+        self.assertEqual(links, [{"platform": "X", "title": "Tibo (@thsottiaux) / X", "url": "https://x.com/thsottiaux"}])
+
     def test_confirmed_identity_name_replaces_mistyped_name(self):
         class EmptySearchProvider:
             name = "empty"
@@ -268,6 +297,14 @@ class ApiTests(unittest.TestCase):
                 )
 
     def test_wikipedia_correction_and_reference_identity_baseline(self):
+        self.assertFalse(WikipediaSearchProvider._is_identity_match("Tibo", "Time"))
+        self.assertTrue(
+            WikipediaSearchProvider._is_identity_match("rafa nadel", "rafa nadal")
+        )
+        self.assertTrue(
+            WikipediaSearchProvider._is_identity_match("Sam Altman", "Sam Altman")
+        )
+
         class FakeResponse:
             def __init__(self, payload):
                 self.payload = payload
@@ -390,6 +427,12 @@ class ApiTests(unittest.TestCase):
                     "title": "Alice Chen 人物全景",
                     "overview": "Alice Chen 是机器人研究者与创业者。她关注真实环境中的学习。",
                     "identity": ["机器人研究者", "Example Robotics 创办者"],
+                    "biography": [{
+                        "period": "求学与职业早期",
+                        "title": "从机器人研究走向创业",
+                        "narrative": "她在研究真实环境学习的过程中，逐步把研究问题转化为创业方向。",
+                        "source_urls": ["https://alice.example/about"],
+                    }],
                     "accomplishments": [{
                         "title": "创办 Example Robotics",
                         "description": "推动具身智能系统走向真实环境。",
@@ -452,6 +495,7 @@ class ApiTests(unittest.TestCase):
                 self.assertTrue(report["public_profiles"])
                 self.assertEqual(len(report["public_sources"]), 3)
                 self.assertEqual(len(report["accomplishments"][0]["source_urls"]), 1)
+                self.assertEqual(report["biography"][0]["title"], "从机器人研究走向创业")
                 self.assertNotIn("invented.example", str(report))
 
                 answer = client.post(
@@ -475,6 +519,7 @@ class ApiTests(unittest.TestCase):
                     self.assertTrue(any("/观点/真实环境学习.md" in name for name in names))
                     self.assertTrue(any("/来源/" in name for name in names))
                     self.assertIn("他做过什么", home)
+                    self.assertIn("## 人物生平", home)
                     self.assertIn("他的核心观点", home)
                     self.assertIn("## 人物影像", home)
                     self.assertIn("![Alice Chen portrait]", home)

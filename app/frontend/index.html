@@ -7,9 +7,9 @@
     <meta name="description" content="输入一个名字，建立完整的人物知识档案。" />
     <title>PublicMind</title>
     <script>if (window.location.protocol === "file:") window.location.replace("http://127.0.0.1:8000/");</script>
-    <link rel="icon" href="/assets/favicon.svg?v=20260902-6" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20260902-6" />
-    <script src="/assets/app.js?v=20260902-6" defer></script>
+    <link rel="icon" href="/assets/favicon.svg?v=20260907-1" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260907-1" />
+    <script src="/assets/app.js?v=20260907-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到内容</a>
@@ -20,7 +20,7 @@
     </header>
 
     <main id="main">
-      <section id="landing-page" class="landing-page" aria-labelledby="landing-title" data-capabilities-version="2026-09-02">
+      <section id="landing-page" class="landing-page" aria-labelledby="landing-title" data-capabilities-version="2026-09-07">
         <svg class="landing-wave" viewBox="0 0 1200 720" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
           <defs><linearGradient id="landing-gradient" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#725cff" stop-opacity="0" /><stop offset=".35" stop-color="#7147ff" stop-opacity=".76" /><stop offset=".6" stop-color="#d500d8" /><stop offset=".78" stop-color="#ff4d00" /><stop offset="1" stop-color="#ff7a22" stop-opacity="0" /></linearGradient></defs>
           <path d="M-80 720 C220 650 405 510 590 350 C790 176 970 54 1280 -20 C1000 128 830 300 620 430 C405 565 220 710 -80 780 Z" fill="url(#landing-gradient)" />
@@ -33,7 +33,7 @@
         </div>
         <div class="landing-capabilities reveal" aria-label="产品能力">
           <section><span>01</span><h2>如何使用</h2><p>输入姓名与身份线索，先打开关键主页确认人物；确认后会按资料修正姓名。补充的网址随时可以重新填写或移除。</p></section>
-          <section><span>02</span><h2>呈现结果</h2><p>网页档案包含公开主页、人物影像、经历、观点、外界评价与时间线，并支持针对人物继续问询。</p></section>
+          <section><span>02</span><h2>呈现结果</h2><p>网页档案包含公开主页、人物影像、成长生平、经历、观点、外界评价与时间线，并支持针对人物继续问询。</p></section>
           <section><span>03</span><h2>使用工具</h2><p>Brave Search 检索公开网页，Wikipedia 与 Wikimedia 提供身份和影像基线，DeepSeek 整理档案并回答问题。</p></section>
           <section><span>04</span><h2>带走资料</h2><p>所有原始来源保留可跳转网址；需要时可下载互相链接的 Markdown 知识库，在 Obsidian 中继续使用。</p></section>
         </div>
@@ -86,10 +86,11 @@
 
       <article id="result-panel" class="dossier" hidden>
         <header class="dossier-header reveal"><div><span>人物档案</span><h2 id="result-title">人物全景</h2></div><div class="dossier-tools"><span id="result-language"></span><a id="download-link" href="#">下载 Obsidian ↘</a></div></header>
-        <nav class="dossier-nav" aria-label="档案目录"><a href="#source-section">信息源</a><a href="#portrait-section">影像</a><a href="#overview-section">概览</a><a href="#work-section">经历</a><a href="#viewpoints-section">观点</a><a href="#ask-section">问询</a><a href="#timeline-section">时间线</a></nav>
+        <nav class="dossier-nav" aria-label="档案目录"><a href="#source-section">信息源</a><a href="#portrait-section">影像</a><a href="#overview-section">概览</a><a href="#biography-section">生平</a><a href="#work-section">经历</a><a href="#viewpoints-section">观点</a><a href="#ask-section">问询</a><a href="#timeline-section">时间线</a></nav>
         <section id="source-section" class="dossier-section source-board reveal" aria-labelledby="source-board-title"><div class="section-content"><div class="source-board-heading"><h3 id="source-board-title">公开主页与信息源</h3><form id="dossier-source-form" class="dossier-source-form"><div class="dossier-source-copy"><label for="dossier-source-url">为这份档案补充新资料</label><p>加入最新主页、文章、访谈或视频，重新整理整份人物档案。</p></div><div class="dossier-source-control"><input id="dossier-source-url" type="url" placeholder="粘贴公开网址" required /><button id="dossier-source-clear" class="clear-source-input" type="button">清空</button><button id="dossier-source-button" type="submit">添加并更新 <span>→</span></button></div><span id="dossier-source-status"></span></form></div><div id="result-profiles" class="profile-grid"></div><div id="result-sources" class="collected-sources"></div></div></section>
         <section id="portrait-section" class="portrait-section reveal" hidden aria-labelledby="portrait-title"><div class="portrait-intro"><h3 id="portrait-title">人物影像</h3></div><div id="result-images" class="portrait-grid"></div></section>
         <section id="overview-section" class="dossier-section overview-section reveal"><div class="section-content"><h3>概览</h3><p id="result-overview" class="lead-copy"></p><ul id="result-identity" class="identity-list"></ul></div></section>
+        <section id="biography-section" class="dossier-section biography-section reveal"><div class="section-content"><div class="biography-heading"><h3>人物生平</h3><p>成长背景、教育与职业转折</p></div><div id="result-biography" class="biography-list"></div></div></section>
         <section id="work-section" class="dossier-section reveal"><div class="section-content"><h3>做过什么</h3><div id="result-accomplishments" class="accomplishment-grid"></div></div></section>
         <section id="viewpoints-section" class="dossier-section reveal"><div class="section-content"><h3>主要观点</h3><div id="result-viewpoints" class="viewpoint-stack"></div></div></section>
         <section id="ask-section" class="dossier-section ask-section reveal"><div class="section-content"><div class="ask-heading"><h3>问这份档案</h3><span id="ask-status">先查人物库，必要时自动补充检索</span></div><form id="ask-form" class="ask-form"><label class="sr-only" for="ask-question">关于这个人物的问题</label><textarea id="ask-question" rows="1" maxlength="600" placeholder="他如何看待 Codex？" required></textarea><button id="ask-button" type="submit" aria-label="发送问题">↑</button></form><div class="ask-suggestions" aria-label="问题示例"><button type="button">他最重要的观点是什么？</button><button type="button">他对年轻人有什么建议？</button></div><div id="ask-answer" class="ask-answer" hidden aria-live="polite"><div id="ask-answer-meta" class="ask-answer-meta" hidden></div><p id="ask-answer-text"></p><div id="ask-answer-sources" class="ask-answer-sources"></div></div></div></section>

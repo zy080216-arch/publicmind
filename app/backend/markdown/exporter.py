@@ -390,7 +390,21 @@ class VaultExporter:
         if not identity:
             lines.append("- 现有资料没有形成独立身份条目。")
 
-        lines.extend(["", "## 他做过什么", ""])
+        lines.extend(["", "## 人物生平", ""])
+        biography = report.get("biography", [])
+        for item in biography:
+            period = "（%s）" % item["period"] if item.get("period") else ""
+            lines.extend(
+                [
+                    "### %s%s" % (item.get("title") or "成长阶段", period),
+                    "",
+                    item.get("narrative") or "",
+                    "",
+                ]
+            )
+        if not biography:
+            lines.append("现有资料还不足以还原连续的人物生平。")
+        lines.extend(["", "详见：[[01 生平与经历]]", "", "## 他做过什么", ""])
         accomplishments = report.get("accomplishments", [])
         for item in accomplishments:
             period = "（%s）" % item["period"] if item.get("period") else ""
@@ -487,6 +501,23 @@ class VaultExporter:
         identity_lines.extend("- %s" % item for item in report.get("identity", []))
         if not report.get("identity"):
             identity_lines.append("现有公开资料不足以形成独立经历条目。")
+        identity_lines.extend(["", "## 成长历程", ""])
+        biography = report.get("biography", [])
+        for item in biography:
+            heading = item.get("title") or "成长阶段"
+            if item.get("period"):
+                heading = "%s（%s）" % (heading, item["period"])
+            identity_lines.extend(["### %s" % heading, "", item.get("narrative") or "", ""])
+            for url in item.get("source_urls", []):
+                linked = source_links.get(url)
+                if linked:
+                    identity_lines.append("- 资料：[[%s|%s]]" % (_link_path(Path(linked[1])), linked[0].title))
+                else:
+                    identity_lines.append("- 资料：[%s](<%s>)" % (url, url))
+            if item.get("source_urls"):
+                identity_lines.append("")
+        if not biography:
+            identity_lines.append("现有公开资料还不足以还原连续的人物生平。")
         (vault_dir / "01 生平与经历.md").write_text(
             "\n".join(identity_lines).strip() + "\n", encoding="utf-8"
         )

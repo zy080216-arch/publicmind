@@ -20,7 +20,7 @@ const el = Object.fromEntries([
   "manual-source-form", "manual-source-url", "manual-source-clear", "manual-source-submit", "manual-source-list", "progress-panel",
   "progress-person", "progress-percent", "progress-bar", "progress-stage", "result-panel",
   "result-title", "result-language", "result-profiles", "result-sources", "result-overview",
-  "result-identity", "result-accomplishments", "result-viewpoints", "result-evolution",
+  "result-identity", "result-biography", "result-accomplishments", "result-viewpoints", "result-evolution",
   "result-external", "result-timeline", "portrait-section", "result-images", "download-link",
   "ask-form", "ask-question", "ask-button", "ask-status", "ask-answer", "ask-answer-meta",
   "ask-answer-text", "ask-answer-sources", "person-count", "person-list",
@@ -457,6 +457,15 @@ function renderReport(report, downloadUrl = null, personId = null) {
     row.append(actions); return row;
   });
   fillList(el.result_identity, content.identity, "现有资料没有形成独立身份条目。", (item) => node("li", "", item));
+  fillList(el.result_biography, content.biography, "现有资料还不足以还原连续的人物生平。", (item) => {
+    const chapter = node("article", "biography-chapter");
+    chapter.append(
+      node("small", "", item.period || "时间不详"),
+      node("h4", "", item.title || "成长阶段"),
+      node("p", "", item.narrative || ""),
+    );
+    return chapter;
+  });
   fillList(el.result_accomplishments, content.accomplishments, "现有资料不足以列出明确事项。", (item) => {
     const card = node("article", "accomplishment-card");
     card.append(node("small", "", item.period || "时间不详"), node("h4", "", item.title), node("p", "", item.description || ""));

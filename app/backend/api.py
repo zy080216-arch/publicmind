@@ -105,6 +105,21 @@ def _is_reference_source(candidate: SourceCandidate) -> bool:
     return candidate.provider == "wikipedia" or host.endswith(".wikipedia.org")
 
 
+def _is_profile_url(url: str, platform: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    parts = [part for part in parsed.path.split("/") if part]
+    if host == "reddit.com" or host.endswith(".reddit.com"):
+        return False
+    if platform in {"X", "GitHub"}:
+        return len(parts) == 1
+    if platform == "YouTube":
+        return bool(
+            parts and (parts[0].startswith("@") or parts[0] in {"channel", "c", "user"})
+        )
+    return platform != "公开资料"
+
+
 def _platform_links(candidates: List[SourceCandidate]) -> List[Dict[str, str]]:
     links: List[Dict[str, str]] = []
     seen = set()
@@ -116,8 +131,10 @@ def _platform_links(candidates: List[SourceCandidate]) -> List[Dict[str, str]]:
         ),
     )
     for candidate in preferred:
+        if candidate.status == "rejected":
+            continue
         platform = _public_platform(candidate.url, candidate.source_role)
-        if platform == "公开资料" or platform in seen:
+        if not _is_profile_url(candidate.url, platform) or platform in seen:
             continue
         seen.add(platform)
         links.append({"platform": platform, "title": candidate.title, "url": candidate.url})
@@ -270,13 +287,24 @@ def create_app(
         enriched.setdefault("language_mode", "zh")
         enriched.setdefault("translation_scope", "structured_report_only")
         enriched.setdefault("images", [])
-        if not enriched.get("public_profiles"):
-            enriched["public_profiles"] = _platform_links(
-                repository.list_candidates(person_id)
+        candidates = repository.list_candidates(person_id)
+        sources = repository.list_sources(person_id)
+        source_ids = {source.url: source.id for source in sources}
+        profiles = _platform_links(
+            [candidate for candidate in candidates if candidate.status == "accepted"]
+        )
+        profile_urls = {item["url"] for item in profiles}
+        profiles.extend(
+            item
+            for item in enriched.get("public_profiles", [])
+            if item.get("url") in source_ids
+            and item.get("url") not in profile_urls
+            and _is_profile_url(
+                str(item.get("url") or ""),
+                str(item.get("platform") or _public_platform(str(item.get("url") or ""))),
             )
-        source_ids = {
-            source.url: source.id for source in repository.list_sources(person_id)
-        }
+        )
+        enriched["public_profiles"] = profiles
         if not enriched.get("public_sources"):
             enriched["public_sources"] = [
                 {
@@ -303,11 +331,17 @@ def create_app(
         person = repository.get_person(person_id)
         if not person:
             return []
+        candidates = repository.list_candidates(person_id)
         reference_urls = [
             candidate.url
-            for candidate in repository.list_candidates(person_id)
-            if _is_reference_source(candidate)
+            for candidate in candidates
+            if candidate.status == "accepted"
+            and candidate.source_role in {"subject_official", "subject_interview"}
         ]
+        reference_urls.extend(
+            candidate.url for candidate in candidates if _is_reference_source(candidate)
+        )
+        reference_urls = list(dict.fromkeys(reference_urls))
         try:
             return active_image_provider.discover(person.name, reference_urls, limit=4)
         except Exception:
@@ -795,11 +829,20 @@ def create_app(
         eligible = [
             item
             for item in candidates
-            if item.score >= 45 and item.source_role != "aggregator_repost"
+            if item.status != "rejected"
+            and item.score >= 45
+            and item.source_role != "aggregator_repost"
         ]
         selected: List[SourceCandidate] = []
         selected_ids = set()
-        reference = next((item for item in candidates if _is_reference_source(item)), None)
+        reference = next(
+            (
+                item
+                for item in candidates
+                if item.status != "rejected" and _is_reference_source(item)
+            ),
+            None,
+        )
         if reference:
             selected.append(reference)
             selected_ids.add(reference.id)
@@ -900,7 +943,13 @@ def create_app(
                     documents,
                     language_mode=language_mode,
                 )
-                report_content["public_profiles"] = _platform_links(candidates)
+                report_content["public_profiles"] = _platform_links(
+                    [
+                        candidate
+                        for candidate in repository.list_candidates(person_id)
+                        if candidate.status == "accepted"
+                    ]
+                )
                 report_content["public_sources"] = [
                     {
                         "title": document.title,
@@ -1066,10 +1115,9 @@ def create_app(
             if not report:
                 raise HTTPException(status_code=404, detail="人物报告尚未生成")
             images = discover_person_images(repository, person_id)
-            if images:
-                content = enrich_report_content(repository, person_id, report.content)
-                content["images"] = images
-                repository.save_report(person_id, content)
+            content = enrich_report_content(repository, person_id, report.content)
+            content["images"] = images
+            repository.save_report(person_id, content)
             return {"person_id": person_id, "images": images}
 
     @app.post("/api/persons/{person_id}/ask")

@@ -5,6 +5,58 @@ from app.backend.media import WikimediaImageProvider
 
 
 class MediaTests(unittest.TestCase):
+    def test_nickname_does_not_turn_time_pages_into_person_photos(self):
+        provider = WikimediaImageProvider()
+        urls = [
+            "https://zh.wikipedia.org/wiki/Time",
+            "https://github.com/tibo-openai",
+            "https://youtube.com/watch?v=4qjEgPojjzM",
+            "https://example.com/Tibo-interview",
+        ]
+        self.assertIsNone(provider._reference_page("Tibo", urls))
+        with patch("app.backend.media.httpx.get") as get:
+            images = provider.discover("Tibo", urls, limit=4)
+        get.assert_not_called()
+        self.assertEqual([item["source_label"] for item in images], ["GitHub", "YouTube"])
+        self.assertFalse(any("Time" in str(item) for item in images))
+
+    def test_commons_rejects_objects_without_the_person_name(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "query": {
+                        "pages": [
+                            {
+                                "title": "File:Pocket watch.jpg",
+                                "imageinfo": [{
+                                    "mime": "image/jpeg",
+                                    "thumburl": "https://upload.wikimedia.org/watch.jpg",
+                                    "url": "https://upload.wikimedia.org/watch-original.jpg",
+                                    "descriptionurl": "https://commons.wikimedia.org/wiki/File:Pocket_watch.jpg",
+                                    "extmetadata": {},
+                                }],
+                            },
+                            {
+                                "title": "File:Geological time scale.jpg",
+                                "imageinfo": [{
+                                    "mime": "image/jpeg",
+                                    "thumburl": "https://upload.wikimedia.org/geological.jpg",
+                                    "url": "https://upload.wikimedia.org/geological-original.jpg",
+                                    "descriptionurl": "https://commons.wikimedia.org/wiki/File:Geological_time_scale.jpg",
+                                    "extmetadata": {},
+                                }],
+                            },
+                        ]
+                    }
+                }
+
+        with patch("app.backend.media.httpx.get", return_value=FakeResponse()):
+            images = WikimediaImageProvider()._commons_images("Tibo", "Tibo", 4)
+        self.assertEqual(images, [])
+
     def test_wikimedia_images_include_lead_photo_credit_and_deduplication(self):
         class FakeResponse:
             def __init__(self, payload):
