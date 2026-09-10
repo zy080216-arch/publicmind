@@ -57,6 +57,28 @@ class ReportEditingTests(unittest.TestCase):
         self.assertEqual(result["public_sources"], [{"url": other}])
         self.assertGreaterEqual(count, 4)
 
+    def test_legacy_unsourced_summary_is_removed_but_detailed_items_remain(self):
+        removed = "https://wrong.example/profile"
+        other = "https://right.example/interview"
+        result, count = prune_report_by_source({
+            "overview": "旧版概览没有保存逐条来源",
+            "identity": ["旧版身份摘要"],
+            "biography": [{"narrative": "有独立正确来源的生平", "source_urls": [other]}],
+            "accomplishments": [],
+            "viewpoint_topics": [],
+            "viewpoint_evolution": [],
+            "external_views": [],
+            "timeline": [],
+            "images": [],
+            "public_sources": [{"url": removed}, {"url": other}],
+            "public_profiles": [],
+        }, removed)
+
+        self.assertEqual(result["overview"], "")
+        self.assertEqual(result["identity"], [])
+        self.assertEqual(result["biography"][0]["narrative"], "有独立正确来源的生平")
+        self.assertEqual(count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

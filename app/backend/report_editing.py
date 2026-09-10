@@ -30,6 +30,10 @@ def prune_report_by_source(content: Dict[str, Any], removed_url: str) -> Tuple[D
 
     result = deepcopy(content)
     removed_count = 0
+    removed_was_report_source = any(
+        isinstance(item, dict) and item.get("url") == removed_url
+        for item in result.get("public_sources", [])
+    )
 
     for key in (
         "biography",
@@ -76,6 +80,9 @@ def prune_report_by_source(content: Dict[str, Any], removed_url: str) -> Tuple[D
             text for text in result.get("identity", [])
             if text not in removed_text or text in supported_text
         ]
+    elif removed_was_report_source:
+        removed_count += len(result.get("identity", []))
+        result["identity"] = []
 
     overview_urls = result.get("overview_source_urls")
     if isinstance(overview_urls, list) and removed_url in overview_urls:
@@ -83,6 +90,9 @@ def prune_report_by_source(content: Dict[str, Any], removed_url: str) -> Tuple[D
         if not result["overview_source_urls"]:
             result["overview"] = ""
             removed_count += 1
+    elif "overview_source_urls" not in result and removed_was_report_source and result.get("overview"):
+        result["overview"] = ""
+        removed_count += 1
 
     before_images = result.get("images", []) if isinstance(result.get("images"), list) else []
     result["images"] = [item for item in before_images if item.get("source_url") != removed_url]
