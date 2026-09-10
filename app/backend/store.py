@@ -459,8 +459,8 @@ class Repository:
         return [self._candidate_from_row(row) for row in rows]
 
     def decide_candidate(self, candidate_id: str, status: str) -> SourceCandidate:
-        if status not in {"accepted", "rejected"}:
-            raise ValueError("candidate status must be accepted or rejected")
+        if status not in {"pending", "accepted", "rejected"}:
+            raise ValueError("candidate status must be pending, accepted or rejected")
         candidate = self.get_candidate(candidate_id)
         if not candidate:
             raise KeyError(candidate_id)

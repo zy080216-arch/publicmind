@@ -12,6 +12,7 @@ from app.backend.discovery.base import SearchHit
 from app.backend.discovery.service import DiscoveryService
 from app.backend.discovery.wikipedia import WikipediaSearchProvider
 from app.backend.models import Person, RawDocument, SourceCandidate
+from app.backend.store import Repository
 
 try:
     from fastapi.testclient import TestClient
@@ -84,11 +85,125 @@ class ApiTests(unittest.TestCase):
         self.assertIn("视频号", joined)
         self.assertIn("百度百科", joined)
         self.assertIn("site:xiaohongshu.com", joined)
+        academic_queries = DiscoveryService.queries(
+            Person(name="黄含", slug="huang-han"),
+            ["中山大学", "昆士兰大学", "机械工程"],
+        )
+        academic_joined = "\n".join(academic_queries)
+        self.assertIn("site:sysu.edu.cn", academic_joined)
+        self.assertIn("Huang Han", academic_joined)
+        self.assertIn("Han Huang", academic_joined)
+        self.assertIn("Sun Yat-sen University", academic_joined)
         english_queries = DiscoveryService.queries(Person(name="Sam Altman", slug="sam-altman"), ["OpenAI"])
         self.assertFalse(any("xiaohongshu" in query for query in english_queries))
         self.assertEqual(_public_platform("https://mp.weixin.qq.com/s/example"), "微信公众号")
         self.assertEqual(_public_platform("https://www.xiaohongshu.com/user/profile/demo"), "小红书")
         self.assertEqual(_public_platform("https://baike.baidu.com/item/demo"), "百度百科")
+
+    def test_modern_academic_identity_beats_ancient_namesake_and_can_be_rejected(self):
+        ancient = SearchHit(
+            "https://en.wikipedia.org/wiki/Han_Huang",
+            "Han Huang — Wikipedia",
+            "Han Huang (723 – 787) was a Chinese politician and painter.",
+        )
+
+        class ReferenceProvider:
+            name = "wikipedia"
+
+            def search(self, query, count=10):
+                return [ancient]
+
+        class AcademicSearchProvider:
+            name = "fixture-search"
+
+            def search(self, query, count=10):
+                return [
+                    SearchHit(
+                        "https://am.sysu.edu.cn/szdw/js/1410793.htm",
+                        "黄含 - 中山大学先进制造学院",
+                        "黄含，中山大学工学部主任、先进制造学院院长、机械工程学科带头人。",
+                    ),
+                    SearchHit(
+                        "https://mechmining.uq.edu.au/profile/386/han-huang",
+                        "Emeritus Professor Han Huang",
+                        "University of Queensland; Chair Professor at Sun Yat-sen University.",
+                    ),
+                ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = create_app(
+                str(root / "publicmind.db"),
+                str(root / "exports"),
+                search_provider=AcademicSearchProvider(),
+                reference_provider=ReferenceProvider(),
+            )
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "黄涵"}).json()
+                payload = {"anchors": ["中山大学", "昆士兰大学", "机械工程"]}
+                prepared = client.post("/api/persons/%s/prepare" % person["id"], json=payload).json()
+                self.assertEqual(
+                    prepared["primary_source"]["url"],
+                    "https://am.sysu.edu.cn/szdw/js/1410793.htm",
+                )
+                self.assertEqual(prepared["canonical_name"], "黄含")
+                ancient_option = next(
+                    item for item in prepared["identity_options"] if "wikipedia" in item["url"]
+                )
+                self.assertIn("古代", ancient_option["era_hint"])
+
+                candidate_id = prepared["primary_source"]["candidate_id"]
+                client.post("/api/candidates/%s/reject" % candidate_id)
+                prepared_again = client.post(
+                    "/api/persons/%s/prepare" % person["id"], json=payload
+                ).json()
+                self.assertEqual(
+                    prepared_again["primary_source"]["url"],
+                    "https://mechmining.uq.edu.au/profile/386/han-huang",
+                )
+                self.assertFalse(
+                    any(item["candidate_id"] == candidate_id for item in prepared_again["identity_options"])
+                )
+                restored = client.post("/api/candidates/%s/restore" % candidate_id)
+                self.assertEqual(restored.status_code, 200)
+                prepared_restored = client.post(
+                    "/api/persons/%s/prepare" % person["id"], json=payload
+                ).json()
+                self.assertEqual(prepared_restored["primary_source"]["candidate_id"], candidate_id)
+
+    def test_ancient_identity_remains_valid_without_modern_clues(self):
+        ancient = SearchHit(
+            "https://zh.wikipedia.org/wiki/韩滉",
+            "韩滉 — Wikipedia",
+            "韩滉（723年—787年），唐朝官员、画家。",
+        )
+
+        class EmptySearchProvider:
+            name = "empty"
+
+            def search(self, query, count=10):
+                return []
+
+        class ReferenceProvider:
+            name = "wikipedia"
+
+            def search(self, query, count=10):
+                return [ancient]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = create_app(
+                str(root / "publicmind.db"),
+                str(root / "exports"),
+                search_provider=EmptySearchProvider(),
+                reference_provider=ReferenceProvider(),
+            )
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "韩滉"}).json()
+                prepared = client.post(
+                    "/api/persons/%s/prepare" % person["id"], json={"anchors": []}
+                ).json()
+                self.assertEqual(prepared["primary_source"]["url"], ancient.url)
 
     def test_existing_dossier_can_be_refreshed_with_a_new_source(self):
         class FakeConnector(SourceConnector):
@@ -164,12 +279,52 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(refreshed_after_edit.status_code, 200)
                 removed = client.delete("/api/sources/%s" % source["id"])
                 self.assertEqual(removed.status_code, 200)
-                self.assertTrue(removed.json()["report_needs_rebuild"])
+                self.assertTrue(removed.json()["report_updated"])
                 self.assertEqual(client.get("/api/persons/%s/documents" % person["id"]).json(), [])
                 refreshed_report = client.get(
                     "/api/persons/%s/report" % person["id"]
                 ).json()["content"]
                 self.assertEqual(refreshed_report["public_sources"], [])
+
+    def test_deleting_source_updates_report_without_regenerating_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = str(root / "publicmind.db")
+            app = create_app(database, str(root / "exports"))
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "测试人物"}).json()
+                source = client.post(
+                    "/api/persons/%s/sources" % person["id"],
+                    json={"url": "https://wrong.example/profile"},
+                ).json()
+                with Repository(database) as repository:
+                    repository.save_report(person["id"], {
+                        "title": "测试人物 人物全景",
+                        "overview": "错误概览",
+                        "overview_source_urls": [source["url"]],
+                        "identity": ["错误身份"],
+                        "identity_source_urls": [{
+                            "text": "错误身份", "source_urls": [source["url"]],
+                        }],
+                        "biography": [],
+                        "accomplishments": [],
+                        "viewpoint_topics": [],
+                        "viewpoint_evolution": [],
+                        "external_views": [],
+                        "timeline": [],
+                        "public_sources": [{"url": source["url"]}],
+                        "public_profiles": [{"url": source["url"]}],
+                        "images": [],
+                    })
+
+                response = client.delete("/api/sources/%s" % source["id"])
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertTrue(payload["report_updated"])
+                self.assertEqual(payload["removed_item_count"], 2)
+                self.assertEqual(payload["report"]["content"]["overview"], "")
+                self.assertEqual(payload["report"]["content"]["identity"], [])
+                self.assertNotIn("needs_rebuild", payload["report"]["content"])
 
     def test_question_gap_triggers_targeted_search_and_persists_new_source(self):
         search_queries = []

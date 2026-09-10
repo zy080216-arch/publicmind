@@ -28,6 +28,8 @@ def validate_profile(raw: Dict[str, Any], allowed_urls: Iterable[str], person_na
         "title": str(raw.get("title") or "%s 人物全景" % person_name).strip(),
         "overview": str(raw.get("overview") or "").strip(),
         "identity": _strings(raw.get("identity")),
+        "identity_source_urls": [],
+        "overview_source_urls": _source_urls(raw.get("overview_source_urls"), allowed),
         "biography": [],
         "accomplishments": [],
         "viewpoint_topics": [],
@@ -35,6 +37,15 @@ def validate_profile(raw: Dict[str, Any], allowed_urls: Iterable[str], person_na
         "timeline": [],
         "external_views": [],
     }
+    for item in raw.get("identity_source_urls", []) if isinstance(raw.get("identity_source_urls"), list) else []:
+        if not isinstance(item, dict) or not str(item.get("text", "")).strip():
+            continue
+        result["identity_source_urls"].append(
+            {
+                "text": str(item.get("text", "")).strip(),
+                "source_urls": _source_urls(item.get("source_urls"), allowed),
+            }
+        )
     for item in raw.get("biography", []) if isinstance(raw.get("biography"), list) else []:
         if not isinstance(item, dict) or not str(item.get("narrative", "")).strip():
             continue
@@ -75,6 +86,7 @@ def validate_profile(raw: Dict[str, Any], allowed_urls: Iterable[str], person_na
             {
                 "name": str(topic.get("name", "")).strip(),
                 "summary": str(topic.get("summary", "")).strip(),
+                "summary_source_urls": _source_urls(topic.get("summary_source_urls"), allowed),
                 "points": points,
             }
         )
@@ -146,7 +158,11 @@ class ProfileBuilder:
         schema = {
             "title": "%s 人物全景" % person.name,
             "overview": "两到四段人物概览",
+            "overview_source_urls": ["支持概览的输入 URL"],
             "identity": ["身份或经历要点"],
+            "identity_source_urls": [
+                {"text": "与 identity 中逐字相同的身份要点", "source_urls": ["必须来自输入 URL"]}
+            ],
             "biography": [
                 {
                     "period": "成长或职业阶段",
@@ -162,6 +178,7 @@ class ProfileBuilder:
                 {
                     "name": "观点主题",
                     "summary": "主题概述",
+                    "summary_source_urls": ["支持主题概述的输入 URL"],
                     "points": [
                         {"statement": "主要观点", "explanation": "解释与上下文", "source_urls": ["必须来自输入 URL"]}
                     ],

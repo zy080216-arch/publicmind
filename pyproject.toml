@@ -14,6 +14,7 @@ dependencies = [
   "httpx>=0.27",
   "trafilatura>=1.12",
   "markdownify>=0.13",
+  "pypinyin>=0.53",
   "SQLAlchemy>=2.0",
   "urllib3>=1.26,<2",
 ]

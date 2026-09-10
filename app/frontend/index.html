@@ -8,8 +8,8 @@
     <title>PublicMind</title>
     <script>if (window.location.protocol === "file:") window.location.replace("http://127.0.0.1:8000/");</script>
     <link rel="icon" href="/assets/favicon.svg?v=20260907-1" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20260907-1" />
-    <script src="/assets/app.js?v=20260907-1" defer></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260910-1" />
+    <script src="/assets/app.js?v=20260910-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到内容</a>
@@ -20,7 +20,7 @@
     </header>
 
     <main id="main">
-      <section id="landing-page" class="landing-page" aria-labelledby="landing-title" data-capabilities-version="2026-09-07">
+      <section id="landing-page" class="landing-page" aria-labelledby="landing-title" data-capabilities-version="2026-09-10">
         <svg class="landing-wave" viewBox="0 0 1200 720" aria-hidden="true" preserveAspectRatio="xMidYMid slice">
           <defs><linearGradient id="landing-gradient" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#725cff" stop-opacity="0" /><stop offset=".35" stop-color="#7147ff" stop-opacity=".76" /><stop offset=".6" stop-color="#d500d8" /><stop offset=".78" stop-color="#ff4d00" /><stop offset="1" stop-color="#ff7a22" stop-opacity="0" /></linearGradient></defs>
           <path d="M-80 720 C220 650 405 510 590 350 C790 176 970 54 1280 -20 C1000 128 830 300 620 430 C405 565 220 710 -80 780 Z" fill="url(#landing-gradient)" />
@@ -32,9 +32,9 @@
           <button id="enter-workbench" class="enter-workbench" type="button">进入人物研究台 <span>→</span></button>
         </div>
         <div class="landing-capabilities reveal" aria-label="产品能力">
-          <section><span>01</span><h2>如何使用</h2><p>输入姓名与身份线索，先打开关键主页确认人物；确认后会按资料修正姓名。补充的网址随时可以重新填写或移除。</p></section>
+          <section><span>01</span><h2>如何使用</h2><p>输入姓名与身份线索，先比较候选主页并排除同名人物；确认后会按资料修正姓名。补充的网址随时可以重新填写或移除。</p></section>
           <section><span>02</span><h2>呈现结果</h2><p>网页档案包含公开主页、人物影像、成长生平、经历、观点、外界评价与时间线，并支持针对人物继续问询。</p></section>
-          <section><span>03</span><h2>使用工具</h2><p>Brave Search 检索公开网页，Wikipedia 与 Wikimedia 提供身份和影像基线，DeepSeek 整理档案并回答问题。</p></section>
+          <section><span>03</span><h2>使用工具</h2><p>Brave Search 检索中外公开网页，国内学者优先匹配学校与机构官网并补充拼音检索；DeepSeek 整理档案并回答问题。</p></section>
           <section><span>04</span><h2>带走资料</h2><p>所有原始来源保留可跳转网址；需要时可下载互相链接的 Markdown 知识库，在 Obsidian 中继续使用。</p></section>
         </div>
       </section>
@@ -75,9 +75,9 @@
       <section id="identity-panel" class="identity-panel reveal" hidden aria-live="polite">
         <div class="panel-heading"><p>是这个人吗？</p><button id="identity-back" class="circle-back" type="button" aria-label="返回修改">←</button></div>
         <article class="primary-identity-source"><span class="source-platform" id="identity-platform">主页</span><div class="identity-source-copy"><h2 id="identity-title"></h2><p id="identity-snippet"></p><a id="identity-link" href="#" target="_blank" rel="noopener noreferrer">打开确认 ↗</a></div></article>
-        <div id="preview-platforms" class="preview-platforms"></div>
+        <div id="preview-platforms" class="preview-platforms" aria-label="其他身份候选"></div>
         <p id="identity-canonical-name" class="identity-canonical-name"></p>
-        <div class="identity-actions"><button id="identity-confirm" class="confirm-action" type="button">就是他 <span>→</span></button></div>
+        <div class="identity-actions"><button id="identity-reject" class="reject-identity" type="button">不是此人</button><button id="identity-confirm" class="confirm-action" type="button">就是他 <span>→</span></button></div>
       </section>
 
       <section id="progress-panel" class="progress-panel" hidden aria-live="polite">

@@ -16,7 +16,7 @@ const el = Object.fromEntries([
   "search-form", "search-button", "person-name", "identity-anchors", "language-mode",
   "landing-page", "enter-workbench", "workbench-shell",
   "config-hint", "config-light", "identity-panel", "identity-platform", "identity-title",
-  "identity-snippet", "identity-link", "preview-platforms", "identity-canonical-name", "identity-back", "identity-confirm",
+  "identity-snippet", "identity-link", "preview-platforms", "identity-canonical-name", "identity-back", "identity-confirm", "identity-reject",
   "manual-source-form", "manual-source-url", "manual-source-clear", "manual-source-submit", "manual-source-list", "progress-panel",
   "progress-person", "progress-percent", "progress-bar", "progress-stage", "result-panel",
   "result-title", "result-language", "result-profiles", "result-sources", "result-overview",
@@ -129,25 +129,97 @@ async function loadPeople() {
 
 function renderPreview() {
   const primary = state.preview.primary_source;
-  el.identity_platform.textContent = primary.platform;
-  el.identity_title.textContent = primary.title;
-  el.identity_snippet.textContent = primary.snippet || "打开主页，通过头像、机构、作品或简介确认身份。";
-  el.identity_link.href = primary.url;
+  if (primary) {
+    el.identity_platform.textContent = [primary.platform, primary.era_hint].filter(Boolean).join(" · ");
+    el.identity_title.textContent = primary.title;
+    el.identity_snippet.textContent = primary.snippet || "打开主页，通过头像、机构、作品或简介确认身份。";
+    el.identity_link.href = primary.url;
+    el.identity_link.hidden = false;
+    el.identity_confirm.disabled = false;
+    el.identity_reject.disabled = false;
+  } else {
+    el.identity_platform.textContent = "没有可用候选";
+    el.identity_title.textContent = "请恢复一个候选，或返回补充身份线索";
+    el.identity_snippet.textContent = "你排除的页面不会被用于建立人物档案。";
+    el.identity_link.hidden = true;
+    el.identity_confirm.disabled = true;
+    el.identity_reject.disabled = true;
+  }
   el.preview_platforms.replaceChildren();
-  (state.preview.platform_links || []).forEach((item) => {
-    const link = node("a", "", `${item.platform} · ${item.title}`);
-    link.href = item.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    el.preview_platforms.append(link);
-  });
-  const canonicalName = state.preview.canonical_name || state.pendingPerson.name;
+  (state.preview.identity_options || [])
+    .filter((item) => !primary || item.candidate_id !== primary.candidate_id)
+    .forEach((item) => el.preview_platforms.append(renderIdentityOption(item, false)));
+  (state.preview.rejected_identity_options || [])
+    .forEach((item) => el.preview_platforms.append(renderIdentityOption(item, true)));
+  const canonicalName = primary?.canonical_name || state.preview.canonical_name || state.pendingPerson.name;
   el.identity_canonical_name.textContent = canonicalName === state.pendingPerson.name
     ? `档案姓名：${canonicalName}`
     : `确认后将姓名修正为：${canonicalName}`;
   renderManualSources();
   el.identity_panel.hidden = false;
   el.identity_panel.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function renderIdentityOption(item, rejected) {
+  const card = node("article", `identity-option${rejected ? " is-rejected" : ""}`);
+  const copy = node("div", "identity-option-copy");
+  copy.append(
+    node("small", "", [item.platform, item.era_hint].filter(Boolean).join(" · ")),
+    node("strong", "", item.title),
+    node("p", "", item.snippet || "打开页面查看身份资料。"),
+  );
+  const actions = node("div", "identity-option-actions");
+  const open = node("a", "", "打开 ↗");
+  open.href = item.url; open.target = "_blank"; open.rel = "noopener noreferrer";
+  if (rejected) {
+    const restore = node("button", "", "恢复候选");
+    restore.type = "button";
+    restore.addEventListener("click", () => restoreIdentityOption(item));
+    actions.append(open, restore);
+  } else {
+    const choose = node("button", "", "设为主要来源");
+    choose.type = "button";
+    choose.addEventListener("click", () => {
+      state.preview.primary_source = item;
+      state.preview.canonical_name = item.canonical_name;
+      renderPreview();
+    });
+    const reject = node("button", "identity-option-reject", "排除");
+    reject.type = "button";
+    reject.addEventListener("click", () => rejectIdentityOption(item));
+    actions.append(open, choose, reject);
+  }
+  card.append(copy, actions);
+  return card;
+}
+
+async function rejectIdentityOption(item) {
+  await request(`/api/candidates/${item.candidate_id}/reject`, { method: "POST" });
+  state.preview.identity_options = (state.preview.identity_options || [])
+    .filter((candidate) => candidate.candidate_id !== item.candidate_id);
+  state.preview.rejected_identity_options = [
+    ...(state.preview.rejected_identity_options || []).filter((candidate) => candidate.candidate_id !== item.candidate_id),
+    item,
+  ];
+  if (state.preview.primary_source?.candidate_id === item.candidate_id) {
+    state.preview.primary_source = state.preview.identity_options[0] || null;
+    state.preview.canonical_name = state.preview.primary_source?.canonical_name || state.pendingPerson.name;
+  }
+  renderPreview();
+  notice("已排除这个候选，可随时恢复。", "info");
+}
+
+async function restoreIdentityOption(item) {
+  await request(`/api/candidates/${item.candidate_id}/restore`, { method: "POST" });
+  state.preview.rejected_identity_options = (state.preview.rejected_identity_options || [])
+    .filter((candidate) => candidate.candidate_id !== item.candidate_id);
+  state.preview.identity_options = [...(state.preview.identity_options || []), item];
+  if (!state.preview.primary_source) {
+    state.preview.primary_source = item;
+    state.preview.canonical_name = item.canonical_name;
+  }
+  renderPreview();
+  notice("候选已恢复。", "info");
 }
 
 function renderManualSources() {
@@ -225,6 +297,7 @@ async function searchIdentity(event) {
     state.preview = await (await request(`/api/persons/${state.pendingPerson.id}/prepare`, {
       method: "POST", body: JSON.stringify({ anchors: state.anchors }),
     })).json();
+    state.preview.rejected_identity_options = [];
     renderPreview();
   } catch (error) {
     notice(error.message, "error");
@@ -392,7 +465,7 @@ async function refreshImages(personId) {
   } catch (_) { /* Image enrichment is optional; keep the dossier readable. */ }
 }
 
-function renderReport(report, downloadUrl = null, personId = null) {
+function renderReport(report, downloadUrl = null, personId = null, shouldScroll = true) {
   const content = report.content || report;
   const resolvedPersonId = personId || report.person_id || null;
   state.activePersonId = resolvedPersonId;
@@ -444,12 +517,12 @@ function renderReport(report, downloadUrl = null, personId = null) {
       remove.type = "button";
       remove.addEventListener("click", () => {
         confirmSourceRemoval(actions, async () => {
-          await request(`/api/sources/${item.source_id}`, { method: "DELETE" });
-          row.remove();
-          [...el.result_profiles.querySelectorAll("a")].forEach((profile) => {
-            if (profile.href === new URL(item.url, window.location.href).href) profile.remove();
-          });
-          notice("来源及其正文已移除。补充正确网址后重新整理即可更新结论。", "info");
+          const payload = await (await request(`/api/sources/${item.source_id}`, { method: "DELETE" })).json();
+          if (payload.report) renderReport(payload.report, null, state.activePersonId, false);
+          const count = Number(payload.removed_item_count || 0);
+          notice(count
+            ? `来源已移除，${count} 条只由它支持的内容也已同步撤下。`
+            : "来源及其正文已移除，其他内容保持不变。", "info");
         });
       });
       actions.append(reedit, remove);
@@ -495,7 +568,7 @@ function renderReport(report, downloadUrl = null, personId = null) {
   if (downloadUrl) { el.download_link.href = downloadUrl; el.download_link.onclick = null; }
   else if (personId) { el.download_link.href = "#"; el.download_link.onclick = (event) => downloadExisting(event, personId); }
   el.result_panel.hidden = false;
-  el.result_panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (shouldScroll) el.result_panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function refreshDossier(event) {
@@ -652,6 +725,9 @@ document.querySelector('.site-nav a[href="#landing-page"]').addEventListener("cl
   el.landing_page.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 el.identity_confirm.addEventListener("click", confirmIdentity);
+el.identity_reject.addEventListener("click", () => {
+  if (state.preview?.primary_source) rejectIdentityOption(state.preview.primary_source).catch((error) => notice(error.message, "error"));
+});
 el.identity_back.addEventListener("click", () => { el.identity_panel.hidden = true; document.querySelector(".hero").scrollIntoView({ behavior: "smooth" }); });
 el.settings_button.addEventListener("click", () => el.settings_dialog.showModal());
 el.settings_close.addEventListener("click", () => el.settings_dialog.close());

@@ -98,8 +98,16 @@ main { width: 100%; }
 .identity-source-copy h2 { margin: 0 0 8px; font-family: var(--display); font-size: clamp(30px, 4vw, 54px); font-weight: 400; line-height: 1.12; }
 .identity-source-copy p { max-width: 720px; margin: 0 0 15px; color: var(--muted); font-size: 13px; }
 .identity-source-copy a { font-size: 13px; text-underline-offset: 4px; }
-.preview-platforms { padding: 15px 0 25px 130px; display: flex; flex-wrap: wrap; gap: 8px 24px; }
-.preview-platforms a { color: var(--muted); font-size: 11px; text-decoration: none; border-bottom: 1px solid var(--line); }
+.preview-platforms { padding: 18px 0 25px 130px; display: grid; gap: 10px; }
+.identity-option { padding: 15px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: center; border-bottom: 1px solid var(--line); }
+.identity-option-copy { min-width: 0; display: grid; gap: 5px; }
+.identity-option-copy small { color: var(--muted); font-size: 14px; }
+.identity-option-copy strong { font-size: 18px; font-weight: 600; }
+.identity-option-copy p { max-width: 820px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.identity-option-actions { display: flex; gap: 8px; align-items: center; }
+.identity-option-actions a, .identity-option-actions button { padding: 7px 11px; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-size: 15px; text-decoration: none; white-space: nowrap; }
+.identity-option-actions .identity-option-reject { color: var(--danger); }
+.identity-option.is-rejected { opacity: .56; }
 .manual-source-block { width: calc(100% - 70px); margin: 0 auto; padding: 20px 22px; display: grid; grid-template-columns: minmax(250px,.8fr) minmax(420px,1.2fr); gap: 14px 30px; align-items: center; color: var(--muted); background: rgba(255,255,255,.94); border: 1px solid rgba(17,21,29,.22); border-radius: 26px; box-shadow: 0 14px 40px rgba(17,21,29,.09); backdrop-filter: blur(16px); }
 .manual-source-block h3 { margin: 0; color: var(--ink); font-family: var(--display); font-size: 27px; font-weight: 400; line-height: 1.1; }
 .manual-source-block p { margin: 5px 0 0; font-size: 16px; line-height: 1.5; }
@@ -119,7 +127,9 @@ main { width: 100%; }
 .source-remove-cancel { color: var(--muted) !important; }
 .manual-source-list { grid-column: 2; }
 .identity-canonical-name { width: fit-content; margin: 15px 0 0 130px; padding: 8px 14px; color: #43368f; background: #efebff; border-radius: 999px; font-size: 14px; }
-.identity-actions { margin-top: 30px; display: flex; justify-content: flex-end; }
+.identity-actions { margin-top: 30px; display: flex; justify-content: flex-end; align-items: center; gap: 24px; }
+.reject-identity { padding: 9px 13px; color: var(--danger); background: transparent; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; font-size: 16px; }
+.reject-identity:disabled { opacity: .4; cursor: default; }
 .confirm-action { padding: 0 0 8px; display: flex; align-items: center; gap: 18px; background: transparent; border: 0; border-bottom: 1px solid var(--ink); cursor: pointer; font-family: var(--display); font-size: 26px; }
 .confirm-action span { font-family: var(--body); }
 

@@ -11,6 +11,46 @@ from ..store import Repository
 from .base import SearchProvider, SearchProviderError
 from .scoring import score_hit
 
+try:
+    from pypinyin import lazy_pinyin
+except ImportError:  # pragma: no cover - dependency is installed with the application
+    lazy_pinyin = None
+
+
+INSTITUTION_ENGLISH_NAMES = {
+    "中山大学": "Sun Yat-sen University",
+    "昆士兰大学": "University of Queensland",
+    "澳昆士兰大学": "University of Queensland",
+    "清华大学": "Tsinghua University",
+    "北京大学": "Peking University",
+    "复旦大学": "Fudan University",
+    "上海交通大学": "Shanghai Jiao Tong University",
+    "浙江大学": "Zhejiang University",
+    "中国科学院": "Chinese Academy of Sciences",
+}
+
+INSTITUTION_DOMAINS = {
+    "中山大学": "sysu.edu.cn",
+    "清华大学": "tsinghua.edu.cn",
+    "北京大学": "pku.edu.cn",
+    "复旦大学": "fudan.edu.cn",
+    "上海交通大学": "sjtu.edu.cn",
+    "浙江大学": "zju.edu.cn",
+    "中国科学院": "cas.cn",
+}
+
+
+def _romanized_names(name: str) -> List[str]:
+    chinese = "".join(re.findall(r"[\u3400-\u9fff]", name))
+    if not chinese or lazy_pinyin is None:
+        return []
+    syllables = [part.capitalize() for part in lazy_pinyin(chinese) if part]
+    if len(syllables) < 2:
+        return []
+    family_first = " ".join(syllables)
+    given_first = " ".join(syllables[1:] + syllables[:1])
+    return list(dict.fromkeys([family_first, given_first]))
+
 
 def canonical_url(url: str) -> str:
     parts = urlsplit(url.strip())
@@ -57,7 +97,33 @@ class DiscoveryService:
                     "%s %s 微博 知乎 B站 抖音" % (base, anchor_text),
                 ]
             )
-        return queries
+            institution_anchors = [
+                anchor for anchor in anchors
+                if re.search(r"大学|学院|研究院|实验室|医院|研究所", anchor)
+            ]
+            for institution in institution_anchors[:3]:
+                queries.append('%s "%s" 教授 院长 导师 师资 官网' % (base, institution))
+                domain = next(
+                    (value for label, value in INSTITUTION_DOMAINS.items() if label in institution),
+                    None,
+                )
+                if domain:
+                    queries.append('%s site:%s' % (base, domain))
+
+            english_institutions = list(dict.fromkeys(
+                english
+                for anchor in anchors
+                for label, english in INSTITUTION_ENGLISH_NAMES.items()
+                if label in anchor
+            ))
+            romanized = _romanized_names(person.name)
+            for romanized_name in romanized:
+                if english_institutions:
+                    for institution in english_institutions[:2]:
+                        queries.append('"%s" "%s" professor dean profile' % (romanized_name, institution))
+                else:
+                    queries.append('"%s" professor researcher profile' % romanized_name)
+        return list(dict.fromkeys(query.strip() for query in queries if query.strip()))
 
     def discover(self, person: Person, anchors: Sequence[str], per_query: int = 8) -> List[SourceCandidate]:
         seen = set()

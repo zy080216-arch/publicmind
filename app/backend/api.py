@@ -18,6 +18,7 @@ from .discovery import (
     SearchProviderError,
     WikipediaSearchProvider,
 )
+from .discovery.service import INSTITUTION_ENGLISH_NAMES
 from .intelligence import (
     KnowledgeAnswerer,
     LLMProvider,
@@ -30,6 +31,7 @@ from .markdown import VaultExporter
 from .media import ImageProvider, WikimediaImageProvider
 from .models import Claim, SourceCandidate
 from .pipeline import IngestPipeline
+from .report_editing import prune_report_by_source
 from .settings import configuration_status, load_local_settings, save_local_settings, settings_path
 from .store import Repository
 
@@ -105,6 +107,128 @@ def _is_reference_source(candidate: SourceCandidate) -> bool:
     return candidate.provider == "wikipedia" or host.endswith(".wikipedia.org")
 
 
+def _normalized_identity_text(value: str) -> str:
+    return re.sub(r"[\W_]+", "", value, flags=re.UNICODE).casefold()
+
+
+ANCHOR_TRANSLATIONS = {
+    **INSTITUTION_ENGLISH_NAMES,
+    "机械工程": "mechanical engineering",
+    "先进制造": "advanced manufacturing",
+    "人工智能": "artificial intelligence",
+    "计算机科学": "computer science",
+    "经济学": "economics",
+    "物理学": "physics",
+    "化学": "chemistry",
+    "医学": "medicine",
+}
+
+
+def _expanded_anchor_terms(anchor: str) -> List[str]:
+    terms = [anchor]
+    terms.extend(
+        english for chinese, english in ANCHOR_TRANSLATIONS.items() if chinese in anchor
+    )
+    return list(dict.fromkeys(term for term in terms if term))
+
+
+def _candidate_years(candidate: SourceCandidate) -> List[int]:
+    text = "%s %s" % (candidate.title, candidate.snippet)
+    values = re.findall(r"(?<!\d)([12]\d{3})(?!\d)", text)
+    values.extend(re.findall(r"(?<!\d)([1-9]\d{2,3})(?=\s*年)", text))
+    values.extend(
+        match.group(1) or match.group(2)
+        for match in re.finditer(
+            r"(?<!\d)([1-9]\d{2,3})\s*[-–—]\s*[1-9]\d{2,3}(?!\d)|"
+            r"(?<!\d)[1-9]\d{2,3}\s*[-–—]\s*([1-9]\d{2,3})(?!\d)",
+            text,
+        )
+    )
+    return list(dict.fromkeys(int(year) for year in values if year))
+
+
+def _candidate_era(candidate: SourceCandidate) -> str:
+    years = _candidate_years(candidate)
+    if years and max(years) < 1500:
+        return "ancient"
+    if any(year >= 1800 for year in years):
+        return "modern"
+    return "unknown"
+
+
+def _modern_identity_context(candidates: List[SourceCandidate], anchors: List[str]) -> bool:
+    markers = (
+        "大学", "学院", "教授", "院长", "博士", "工程", "公司", "创始人",
+        "university", "professor", "dean", "engineer", "emeritus", "founder", "ceo",
+    )
+    anchor_text = " ".join(anchors).casefold()
+    if any(marker in anchor_text for marker in markers):
+        return True
+    return any(
+        _candidate_era(item) == "modern" and not _is_reference_source(item)
+        for item in candidates
+    )
+
+
+def _era_conflict(candidate: SourceCandidate, candidates: List[SourceCandidate], anchors: List[str]) -> bool:
+    return _modern_identity_context(candidates, anchors) and _candidate_era(candidate) == "ancient"
+
+
+def _institution_priority(candidate: SourceCandidate, anchors: List[str]) -> int:
+    host = (urlparse(candidate.url).hostname or "").lower().removeprefix("www.")
+    text = _normalized_identity_text("%s %s" % (candidate.title, candidate.snippet))
+    institutional_host = bool(
+        host.endswith((".edu", ".gov", ".gov.cn"))
+        or re.search(r"\.(?:edu|ac)\.[a-z]{2,3}$", host)
+    )
+    matching_institution = any(
+        any(_normalized_identity_text(term) in text for term in _expanded_anchor_terms(anchor))
+        for anchor in anchors
+        if re.search(r"大学|学院|研究院|实验室|医院|研究所", anchor)
+    )
+    return 0 if institutional_host and matching_institution else 1 if institutional_host else 2
+
+
+def _anchor_match_count(candidate: SourceCandidate, anchors: List[str]) -> int:
+    text = _normalized_identity_text("%s %s" % (candidate.title, candidate.snippet))
+    return sum(
+        1
+        for anchor in anchors
+        if any(_normalized_identity_text(term) in text for term in _expanded_anchor_terms(anchor))
+    )
+
+
+def _identity_page_priority(candidate: SourceCandidate) -> int:
+    path = urlparse(candidate.url).path.casefold()
+    platform = _public_platform(candidate.url, candidate.source_role)
+    if platform in {"X", "GitHub", "LinkedIn"} and _is_profile_url(candidate.url, platform):
+        return 0
+    if any(marker in path for marker in ("/profile", "/person", "/faculty", "/staff", "/szdw/", "/js/")):
+        return 0
+    if any(marker in path for marker in ("/news", "/article", "/post", "/story")):
+        return 2
+    return 1
+
+
+def _identity_sort_key(
+    candidate: SourceCandidate, candidates: List[SourceCandidate], anchors: List[str]
+) -> tuple:
+    platform_priority = {
+        "X": 0, "官网 / 博客": 1, "GitHub": 2, "YouTube": 3,
+        "LinkedIn": 4, "知乎": 5, "微博": 6, "Bilibili": 7, "公开资料": 8,
+    }
+    return (
+        1 if _era_conflict(candidate, candidates, anchors) else 0,
+        _institution_priority(candidate, anchors),
+        0 if candidate.source_role == "subject_official" else 1,
+        0 if _is_reference_source(candidate) else 1,
+        _identity_page_priority(candidate),
+        -_anchor_match_count(candidate, anchors),
+        platform_priority.get(_public_platform(candidate.url, candidate.source_role), 9),
+        -candidate.score,
+    )
+
+
 def _is_profile_url(url: str, platform: str) -> bool:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().removeprefix("www.")
@@ -141,29 +265,14 @@ def _platform_links(candidates: List[SourceCandidate]) -> List[Dict[str, str]]:
     return links
 
 
-def _primary_identity_source(candidates: List[SourceCandidate]) -> Optional[SourceCandidate]:
-    if not candidates:
+def _primary_identity_source(
+    candidates: List[SourceCandidate], anchors: Optional[List[str]] = None
+) -> Optional[SourceCandidate]:
+    eligible = [item for item in candidates if item.status != "rejected"]
+    if not eligible:
         return None
-    platform_priority = {
-        "X": 0,
-        "官网 / 博客": 1,
-        "GitHub": 2,
-        "YouTube": 3,
-        "LinkedIn": 4,
-        "知乎": 5,
-        "微博": 6,
-        "Bilibili": 7,
-        "公开资料": 8,
-    }
-    return min(
-        candidates,
-        key=lambda item: (
-            0 if item.source_role == "subject_official" else 1,
-            0 if _is_reference_source(item) else 1,
-            platform_priority.get(_public_platform(item.url, item.source_role), 9),
-            -item.score,
-        ),
-    )
+    anchor_list = anchors or []
+    return min(eligible, key=lambda item: _identity_sort_key(item, eligible, anchor_list))
 
 
 def _candidate_payload(candidate: SourceCandidate) -> Dict[str, Any]:
@@ -189,11 +298,40 @@ def _candidate_payload(candidate: SourceCandidate) -> Dict[str, Any]:
     }
 
 
+def _identity_option_payload(candidate: SourceCandidate, fallback_name: str) -> Dict[str, Any]:
+    years = _candidate_years(candidate)
+    if _candidate_era(candidate) == "ancient":
+        era_hint = "古代" + (" · %s" % "–".join(str(year) for year in years[:2]) if years else "")
+    elif _candidate_era(candidate) == "modern":
+        era_hint = "近现代" + (" · %s" % "–".join(str(year) for year in years[:2]) if years else "")
+    else:
+        era_hint = "年代未明"
+    return {
+        "candidate_id": candidate.id,
+        "title": candidate.title,
+        "url": candidate.url,
+        "snippet": candidate.snippet,
+        "platform": _public_platform(candidate.url, candidate.source_role),
+        "canonical_name": _canonical_person_name(candidate, fallback_name),
+        "era_hint": era_hint,
+        "status": candidate.status,
+    }
+
+
 def _canonical_person_name(candidate: SourceCandidate, fallback: str) -> str:
     title = candidate.title.strip()
     if candidate.provider == "wikipedia" or _is_reference_source(candidate):
         title = re.sub(r"\s*(?:—|–|\||:|-)\s*Wikipedia\s*$", "", title, flags=re.IGNORECASE)
     else:
+        first_segment = re.split(r"\s*(?:—|–|\||：|:)\s*|\s+-\s+", title, maxsplit=1)[0].strip()
+        if 1 < len(first_segment) <= 60:
+            title = first_segment
+        title = re.sub(
+            r"^(?:(?:Emeritus|Associate|Assistant|Distinguished|Chair)\s+)*(?:Professor|Prof\.?|Dr\.?)\s+",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
         title = re.sub(r"\s*[（(]@[^)）]+[)）].*$", "", title)
         title = re.sub(
             r"\s*[—–|]\s*(X|Twitter|GitHub|LinkedIn|YouTube|微博|知乎|小红书).*$",
@@ -339,7 +477,9 @@ def create_app(
             and candidate.source_role in {"subject_official", "subject_interview"}
         ]
         reference_urls.extend(
-            candidate.url for candidate in candidates if _is_reference_source(candidate)
+            candidate.url
+            for candidate in candidates
+            if candidate.status != "rejected" and _is_reference_source(candidate)
         )
         reference_urls = list(dict.fromkeys(reference_urls))
         try:
@@ -532,27 +672,27 @@ def create_app(
             if not source:
                 raise HTTPException(status_code=404, detail="信息源不存在")
             repository.delete_source(source_id)
+            for candidate in repository.list_candidates(source.person_id):
+                if candidate.url == source.url and candidate.id:
+                    repository.decide_candidate(candidate.id, "rejected")
             report = repository.get_report(source.person_id)
+            updated_report = None
+            removed_item_count = 0
             if report:
-                content = dict(report.content)
-                content["public_sources"] = [
-                    item
-                    for item in content.get("public_sources", [])
-                    if item.get("url") != source.url
-                ]
-                content["public_profiles"] = [
-                    item
-                    for item in content.get("public_profiles", [])
-                    if item.get("url") != source.url
-                ]
-                content["needs_rebuild"] = True
+                content, removed_item_count = prune_report_by_source(report.content, source.url)
                 repository.save_report(source.person_id, content)
+                updated_report = {
+                    "person_id": source.person_id,
+                    "content": enrich_report_content(repository, source.person_id, content),
+                }
             return {
                 "id": source.id,
                 "person_id": source.person_id,
                 "url": source.url,
                 "removed": True,
-                "report_needs_rebuild": bool(report),
+                "report_updated": bool(report),
+                "removed_item_count": removed_item_count,
+                "report": updated_report,
             }
 
     @app.patch("/api/sources/{source_id}")
@@ -632,23 +772,26 @@ def create_app(
                 ).discover(person, anchors)
             except SearchProviderError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
-            primary = _primary_identity_source(candidates)
+            primary = _primary_identity_source(candidates, anchors)
             if not primary:
                 raise HTTPException(
                     status_code=404,
                     detail="没有找到可以确认身份的公开主页，请补充机构、领域或用户名",
                 )
+            eligible = [item for item in candidates if item.status != "rejected"]
+            ordered = sorted(
+                eligible,
+                key=lambda item: _identity_sort_key(item, eligible, anchors),
+            )
+            primary_payload = _identity_option_payload(primary, person.name)
             return {
                 "person_id": person_id,
                 "name": person.name,
-                "canonical_name": _canonical_person_name(primary, person.name),
-                "primary_source": {
-                    "candidate_id": primary.id,
-                    "title": primary.title,
-                    "url": primary.url,
-                    "snippet": primary.snippet,
-                    "platform": _public_platform(primary.url, primary.source_role),
-                },
+                "canonical_name": primary_payload["canonical_name"],
+                "primary_source": primary_payload,
+                "identity_options": [
+                    _identity_option_payload(item, person.name) for item in ordered[:6]
+                ],
                 "platform_links": _platform_links(candidates),
             }
 
@@ -674,6 +817,14 @@ def create_app(
             if not candidate:
                 raise HTTPException(status_code=404, detail="candidate not found")
             return _candidate_payload(repository.decide_candidate(candidate_id, "rejected"))
+
+    @app.post("/api/candidates/{candidate_id}/restore")
+    def restore_candidate(candidate_id: str):
+        with Repository(db) as repository:
+            candidate = repository.get_candidate(candidate_id)
+            if not candidate:
+                raise HTTPException(status_code=404, detail="candidate not found")
+            return _candidate_payload(repository.decide_candidate(candidate_id, "pending"))
 
     def crawl_source(job_id: str, person_id: str, source_id: str, source_url: str) -> None:
         with Repository(db) as repository:
@@ -825,21 +976,24 @@ def create_app(
             _, zip_path = IngestPipeline(repository).export(person_id, exports)
         return FileResponse(str(Path(zip_path)), filename=Path(zip_path).name, media_type="application/zip")
 
-    def select_candidates(candidates: List[SourceCandidate], limit: int = 12) -> List[SourceCandidate]:
+    def select_candidates(
+        candidates: List[SourceCandidate], anchors: List[str], limit: int = 12
+    ) -> List[SourceCandidate]:
         eligible = [
             item
             for item in candidates
             if item.status != "rejected"
             and item.score >= 45
             and item.source_role != "aggregator_repost"
+            and not _era_conflict(item, candidates, anchors)
         ]
         selected: List[SourceCandidate] = []
         selected_ids = set()
         reference = next(
             (
                 item
-                for item in candidates
-                if item.status != "rejected" and _is_reference_source(item)
+                for item in eligible
+                if _is_reference_source(item)
             ),
             None,
         )
@@ -895,7 +1049,7 @@ def create_app(
                         current_search_provider(),
                         identity_reference_provider,
                     ).discover(person, anchors)
-                selected = select_candidates(candidates)
+                selected = select_candidates(candidates, anchors)
                 if confirmed_source_url:
                     confirmed = next(
                         (item for item in candidates if item.url == confirmed_source_url), None
