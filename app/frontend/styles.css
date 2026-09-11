@@ -252,7 +252,8 @@ main { width: 100%; }
 .person-item { padding: 22px 0; display: grid; grid-template-columns: 1fr 130px auto; gap: 30px; align-items: center; border-bottom: 1px solid var(--line); }
 .person-item strong { display: block; font-family: var(--display); font-size: 28px; font-weight: 400; }.person-item small { max-width: 680px; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 11px; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; }.person-item span { color: var(--muted); font-size: 10px; }.person-item button { background: transparent; border: 0; cursor: pointer; font-size: 12px; }
 .person-actions { display: flex; align-items: center; gap: 18px; }
-.person-actions button:last-child { color: var(--muted); border-bottom: 1px solid var(--line); }
+.person-actions button { color: var(--muted); border-bottom: 1px solid var(--line); }
+.person-actions .person-remove { color: var(--danger); border-bottom-color: rgba(180, 45, 45, .35); }
 .empty-state { color: var(--muted); }
 
 .settings-dialog { width: min(520px, calc(100% - 30px)); padding: 0; color: var(--ink); background: var(--paper); border: 0; box-shadow: 0 35px 100px rgba(0,0,0,.22); }

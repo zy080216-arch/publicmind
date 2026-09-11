@@ -263,6 +263,14 @@ class Repository:
             for row in rows
         ]
 
+    def delete_person(self, person_id: str) -> Optional[Person]:
+        person = self.get_person(person_id)
+        if not person:
+            return None
+        self.connection.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+        self.connection.commit()
+        return person
+
     def add_source(
         self, person_id: str, url: str, source_role: str = "unclassified"
     ) -> Source:

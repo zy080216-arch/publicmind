@@ -5,7 +5,12 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
-from app.backend.api import _platform_links, _public_platform, create_app
+from app.backend.api import (
+    _candidate_identity_conflicts,
+    _platform_links,
+    _public_platform,
+    create_app,
+)
 from app.backend.connectors import ConnectorRegistry, SourceConnector
 from app.backend.connectors.web import WebConnector
 from app.backend.discovery.base import SearchHit
@@ -94,11 +99,143 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Huang Han", academic_joined)
         self.assertIn("Han Huang", academic_joined)
         self.assertIn("Sun Yat-sen University", academic_joined)
+        self.assertIn("site:scholar.google.com/citations", academic_joined)
+        self.assertIn("site:openalex.org", academic_joined)
+        self.assertIn("filetype:pdf", academic_joined)
         english_queries = DiscoveryService.queries(Person(name="Sam Altman", slug="sam-altman"), ["OpenAI"])
         self.assertFalse(any("xiaohongshu" in query for query in english_queries))
         self.assertEqual(_public_platform("https://mp.weixin.qq.com/s/example"), "微信公众号")
         self.assertEqual(_public_platform("https://www.xiaohongshu.com/user/profile/demo"), "小红书")
         self.assertEqual(_public_platform("https://baike.baidu.com/item/demo"), "百度百科")
+        self.assertEqual(_public_platform("https://doi.org/10.1000/example"), "DOI")
+        self.assertEqual(_public_platform("https://openalex.org/A123"), "OpenAlex")
+
+    def test_identity_conflicts_cover_age_gender_birth_year_and_primary_field(self):
+        baseline = SourceCandidate(
+            person_id="person",
+            url="https://university.example/profile/han-huang",
+            title="Professor Han Huang",
+            snippet="Male mechanical engineering professor, born in 1965, age 61.",
+            provider="fixture",
+            query="Han Huang",
+            score=90,
+            source_role="subject_official",
+            id="baseline",
+        )
+        namesake = SourceCandidate(
+            person_id="person",
+            url="https://other.example/person/han-huang",
+            title="Professor Han Huang",
+            snippet="Female mathematics professor, born in 1988, age 38.",
+            provider="fixture",
+            query="Han Huang",
+            score=70,
+            source_role="unclassified",
+            id="namesake",
+        )
+        conflicts = _candidate_identity_conflicts(
+            namesake, baseline, ["机械工程", "大学教授"]
+        )
+        self.assertIn("出生年代冲突", conflicts)
+        self.assertIn("年龄冲突", conflicts)
+        self.assertIn("性别冲突", conflicts)
+        self.assertIn("主要领域冲突", conflicts)
+
+    def test_confirmed_identity_filters_conflicting_namesake_before_ingestion(self):
+        baseline_url = "https://university.example/profile/han-huang"
+        namesake_url = "https://other.example/person/han-huang"
+        paper_url = "https://doi.org/10.1000/manufacturing"
+
+        class FakeSearchProvider:
+            name = "fixture-search"
+
+            def search(self, query, count=10):
+                return [
+                    SearchHit(
+                        baseline_url,
+                        "Han Huang official profile",
+                        "Male mechanical engineering professor, born in 1965, age 61.",
+                    ),
+                    SearchHit(
+                        namesake_url,
+                        "Professor Han Huang",
+                        "Female mathematics professor, born in 1988, age 38.",
+                    ),
+                    SearchHit(
+                        paper_url,
+                        "Precision manufacturing research",
+                        "Han Huang · mechanical engineering publication · 2024.",
+                    ),
+                ]
+
+        class FakeConnector(SourceConnector):
+            platform = "fixture"
+
+            def can_handle(self, url):
+                return True
+
+            async def fetch(self, url):
+                return RawDocument(
+                    source_url=url,
+                    source_type="article",
+                    title=url,
+                    raw_text="Han Huang researches precision manufacturing.",
+                )
+
+        class FakeLLMProvider:
+            name = "fixture-llm"
+
+            def generate_json(self, system, prompt):
+                return {
+                    "title": "Han Huang 人物全景",
+                    "overview": "Han Huang 从事精密制造研究。",
+                    "overview_source_urls": [baseline_url, paper_url],
+                    "identity": ["机械工程教授"],
+                    "identity_source_urls": [{
+                        "text": "机械工程教授", "source_urls": [baseline_url],
+                    }],
+                    "biography": [],
+                    "accomplishments": [],
+                    "viewpoint_topics": [],
+                    "viewpoint_evolution": [],
+                    "timeline": [],
+                    "external_views": [],
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = create_app(
+                str(root / "publicmind.db"),
+                str(root / "exports"),
+                search_provider=FakeSearchProvider(),
+                llm_provider=FakeLLMProvider(),
+                connector_registry=ConnectorRegistry([FakeConnector()]),
+            )
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "Han Huang"}).json()
+                anchors = ["mechanical engineering", "professor"]
+                prepared = client.post(
+                    "/api/persons/%s/prepare" % person["id"], json={"anchors": anchors}
+                ).json()
+                self.assertEqual(prepared["primary_source"]["url"], baseline_url)
+                started = client.post(
+                    "/api/persons/%s/build" % person["id"],
+                    json={
+                        "anchors": anchors,
+                        "confirmed_source_url": baseline_url,
+                        "confirmed_name": "Han Huang",
+                        "use_existing_candidates": True,
+                    },
+                ).json()
+                job = client.get("/api/build-jobs/%s" % started["id"]).json()
+                self.assertEqual(job["status"], "completed")
+                urls = {
+                    item["url"]
+                    for item in client.get("/api/persons/%s/sources" % person["id"]).json()
+                }
+                self.assertIn(baseline_url, urls)
+                self.assertIn(paper_url, urls)
+                self.assertNotIn(namesake_url, urls)
 
     def test_modern_academic_identity_beats_ancient_namesake_and_can_be_rejected(self):
         ancient = SearchHit(
@@ -325,6 +462,32 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(payload["report"]["content"]["overview"], "")
                 self.assertEqual(payload["report"]["content"]["identity"], [])
                 self.assertNotIn("needs_rebuild", payload["report"]["content"])
+
+    def test_existing_person_can_be_deleted_with_related_data_and_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = str(root / "publicmind.db")
+            exports = root / "exports"
+            app = create_app(database, str(exports))
+            with TestClient(app) as client:
+                person = client.post("/api/persons", json={"name": "待删除人物"}).json()
+                client.post(
+                    "/api/persons/%s/sources" % person["id"],
+                    json={"url": "https://example.com/profile"},
+                )
+                exports.mkdir()
+                archive = exports / (person["slug"] + ".zip")
+                vault = exports / person["slug"]
+                archive.write_bytes(b"fixture")
+                vault.mkdir()
+                (vault / "00 人物全景.md").write_text("fixture", encoding="utf-8")
+
+                removed = client.delete("/api/persons/%s" % person["id"])
+                self.assertEqual(removed.status_code, 200)
+                self.assertTrue(removed.json()["removed"])
+                self.assertEqual(client.get("/api/persons").json(), [])
+                self.assertFalse(archive.exists())
+                self.assertFalse(vault.exists())
 
     def test_question_gap_triggers_targeted_search_and_persists_new_source(self):
         search_queries = []

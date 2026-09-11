@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ from .connectors import ConnectorRegistry
 from .discovery import (
     BraveSearchProvider,
     DiscoveryService,
+    AcademicIndexProvider,
     SearchProvider,
     SearchProviderError,
     WikipediaSearchProvider,
@@ -97,6 +99,14 @@ def _public_platform(url: str, source_role: str = "unclassified") -> str:
         return "抖音"
     if host == "linkedin.com":
         return "LinkedIn"
+    if host == "openalex.org":
+        return "OpenAlex"
+    if host == "doi.org":
+        return "DOI"
+    if host == "scholar.google.com":
+        return "Google Scholar"
+    if host == "orcid.org":
+        return "ORCID"
     if source_role == "subject_official":
         return "官网 / 博客"
     return "公开资料"
@@ -156,6 +166,109 @@ def _candidate_era(candidate: SourceCandidate) -> str:
     return "unknown"
 
 
+def _candidate_birth_year(candidate: SourceCandidate) -> Optional[int]:
+    text = "%s %s" % (candidate.title, candidate.snippet)
+    patterns = (
+        r"(?:born|b\.)\s*(?:in\s*)?((?:18|19|20)\d{2})",
+        r"出生(?:于)?\s*((?:18|19|20)\d{2})\s*年?",
+        r"((?:18|19|20)\d{2})\s*年(?:出生|生)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _candidate_age(candidate: SourceCandidate) -> Optional[int]:
+    text = "%s %s" % (candidate.title, candidate.snippet)
+    match = re.search(
+        r"(?<!\d)(\d{1,3})\s*(?:岁|[- ]year[- ]old)(?!\w)|\bage\s+(\d{1,3})\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    age = int(match.group(1) or match.group(2)) if match else 0
+    if 10 <= age <= 110:
+        return age
+    return None
+
+
+def _candidate_gender(candidate: SourceCandidate) -> Optional[str]:
+    text = "%s %s" % (candidate.title, candidate.snippet)
+    if re.search(r"(?:女性|女学者|女教授|女士|\bfemale\b|\bwoman\b|\bshe\b|\bher\b)", text, flags=re.IGNORECASE):
+        return "female"
+    if re.search(r"(?:男性|男学者|男教授|先生|\bmale\b|\bman\b|\bhe\b|\bhis\b)", text, flags=re.IGNORECASE):
+        return "male"
+    return None
+
+
+FIELD_MARKERS = {
+    "mechanical_engineering": (
+        "机械工程", "先进制造", "制造工程", "mechanical engineering",
+        "advanced manufacturing", "manufacturing engineering", "robotics", "机器人",
+    ),
+    "computer_science": (
+        "计算机", "软件工程", "人工智能", "computer science", "software engineering",
+        "artificial intelligence", "machine learning", "机器学习", "computer architecture",
+        "processor", "algorithm", "matrix multiplication",
+    ),
+    "mathematics": ("数学", "mathematics", "mathematician", "algebra", "geometry"),
+    "medicine": ("医学", "临床", "医院", "medicine", "medical", "physician", "surgeon"),
+    "economics_business": ("经济学", "金融", "商业", "economics", "finance", "business"),
+    "sports": ("网球", "足球", "篮球", "运动员", "tennis", "football", "basketball", "athlete"),
+    "arts": ("艺术", "画家", "音乐", "电影", "artist", "painter", "music", "film"),
+    "politics_history": ("政治", "历史", "官员", "politician", "history", "official"),
+}
+
+
+def _field_hints(text: str) -> set:
+    lowered = text.casefold()
+    return {
+        field
+        for field, markers in FIELD_MARKERS.items()
+        if any(marker.casefold() in lowered for marker in markers)
+    }
+
+
+def _candidate_identity_conflicts(
+    candidate: SourceCandidate, baseline: SourceCandidate, anchors: List[str]
+) -> List[str]:
+    if candidate.id == baseline.id:
+        return []
+    conflicts: List[str] = []
+    baseline_era = _candidate_era(baseline)
+    candidate_era = _candidate_era(candidate)
+    if {baseline_era, candidate_era} == {"ancient", "modern"}:
+        conflicts.append("年代冲突")
+    baseline_birth = _candidate_birth_year(baseline)
+    candidate_birth = _candidate_birth_year(candidate)
+    if baseline_birth and candidate_birth and abs(baseline_birth - candidate_birth) >= 8:
+        conflicts.append("出生年代冲突")
+    baseline_age = _candidate_age(baseline)
+    candidate_age = _candidate_age(candidate)
+    if baseline_age and candidate_age and abs(baseline_age - candidate_age) >= 8:
+        conflicts.append("年龄冲突")
+    baseline_gender = _candidate_gender(baseline)
+    candidate_gender = _candidate_gender(candidate)
+    if baseline_gender and candidate_gender and baseline_gender != candidate_gender:
+        conflicts.append("性别冲突")
+
+    candidate_text = "%s %s" % (candidate.title, candidate.snippet)
+    candidate_fields = _field_hints(candidate_text)
+    anchor_fields = _field_hints(" ".join(anchors))
+    baseline_fields = _field_hints("%s %s" % (baseline.title, baseline.snippet))
+    expected_fields = anchor_fields or baseline_fields
+    if candidate_fields and expected_fields and candidate_fields.isdisjoint(expected_fields):
+        conflicts.append("主要领域冲突")
+
+    if _identity_page_priority(candidate) == 0 and candidate.provider != "openalex":
+        baseline_name = _normalized_identity_text(_canonical_person_name(baseline, ""))
+        candidate_name = _normalized_identity_text(_canonical_person_name(candidate, ""))
+        if baseline_name and candidate_name and baseline_name != candidate_name:
+            conflicts.append("姓名冲突")
+    return conflicts
+
+
 def _modern_identity_context(candidates: List[SourceCandidate], anchors: List[str]) -> bool:
     markers = (
         "大学", "学院", "教授", "院长", "博士", "工程", "公司", "创始人",
@@ -201,8 +314,12 @@ def _anchor_match_count(candidate: SourceCandidate, anchors: List[str]) -> int:
 def _identity_page_priority(candidate: SourceCandidate) -> int:
     path = urlparse(candidate.url).path.casefold()
     platform = _public_platform(candidate.url, candidate.source_role)
-    if platform in {"X", "GitHub", "LinkedIn"} and _is_profile_url(candidate.url, platform):
+    if platform in {
+        "X", "GitHub", "LinkedIn", "OpenAlex", "Google Scholar", "ORCID"
+    } and _is_profile_url(candidate.url, platform):
         return 0
+    if platform == "DOI":
+        return 3
     if any(marker in path for marker in ("/profile", "/person", "/faculty", "/staff", "/szdw/", "/js/")):
         return 0
     if any(marker in path for marker in ("/news", "/article", "/post", "/story")):
@@ -241,6 +358,12 @@ def _is_profile_url(url: str, platform: str) -> bool:
         return bool(
             parts and (parts[0].startswith("@") or parts[0] in {"channel", "c", "user"})
         )
+    if platform == "DOI":
+        return False
+    if platform == "OpenAlex":
+        return bool(parts and parts[0].upper().startswith("A"))
+    if platform == "Google Scholar":
+        return parsed.path.rstrip("/") == "/citations"
     return platform != "公开资料"
 
 
@@ -298,7 +421,12 @@ def _candidate_payload(candidate: SourceCandidate) -> Dict[str, Any]:
     }
 
 
-def _identity_option_payload(candidate: SourceCandidate, fallback_name: str) -> Dict[str, Any]:
+def _identity_option_payload(
+    candidate: SourceCandidate,
+    fallback_name: str,
+    baseline: Optional[SourceCandidate] = None,
+    anchors: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     years = _candidate_years(candidate)
     if _candidate_era(candidate) == "ancient":
         era_hint = "古代" + (" · %s" % "–".join(str(year) for year in years[:2]) if years else "")
@@ -306,7 +434,7 @@ def _identity_option_payload(candidate: SourceCandidate, fallback_name: str) -> 
         era_hint = "近现代" + (" · %s" % "–".join(str(year) for year in years[:2]) if years else "")
     else:
         era_hint = "年代未明"
-    return {
+    payload = {
         "candidate_id": candidate.id,
         "title": candidate.title,
         "url": candidate.url,
@@ -316,6 +444,11 @@ def _identity_option_payload(candidate: SourceCandidate, fallback_name: str) -> 
         "era_hint": era_hint,
         "status": candidate.status,
     }
+    if baseline is not None:
+        payload["identity_conflicts"] = _candidate_identity_conflicts(
+            candidate, baseline, anchors or []
+        )
+    return payload
 
 
 def _canonical_person_name(candidate: SourceCandidate, fallback: str) -> str:
@@ -328,6 +461,12 @@ def _canonical_person_name(candidate: SourceCandidate, fallback: str) -> str:
             title = first_segment
         title = re.sub(
             r"^(?:(?:Emeritus|Associate|Assistant|Distinguished|Chair)\s+)*(?:Professor|Prof\.?|Dr\.?)\s+",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+        title = re.sub(
+            r"\s+(?:(?:official|professional)\s+)?(?:profile|homepage|home\s+page)$",
             "",
             title,
             flags=re.IGNORECASE,
@@ -377,6 +516,7 @@ def create_app(
     export_dir: Optional[str] = None,
     search_provider: Optional[SearchProvider] = None,
     reference_provider: Optional[SearchProvider] = None,
+    academic_provider: Optional[AcademicIndexProvider] = None,
     llm_provider: Optional[LLMProvider] = None,
     image_provider: Optional[ImageProvider] = None,
     connector_registry: Optional[ConnectorRegistry] = None,
@@ -397,6 +537,13 @@ def create_app(
         else None
         if search_provider is not None
         else WikipediaSearchProvider()
+    )
+    active_academic_provider = (
+        academic_provider
+        if academic_provider is not None
+        else None
+        if search_provider is not None
+        else AcademicIndexProvider()
     )
     active_image_provider = (
         image_provider
@@ -613,6 +760,31 @@ def create_app(
                 "description": person.description,
             }
 
+    @app.delete("/api/persons/{person_id}")
+    def delete_person(person_id: str) -> Dict[str, Any]:
+        with Repository(db) as repository:
+            person = repository.get_person(person_id)
+            if not person:
+                raise HTTPException(status_code=404, detail="人物不存在")
+            source_count = len(repository.list_sources(person_id))
+            document_count = len(repository.list_documents(person_id))
+            repository.delete_person(person_id)
+
+        export_root = Path(exports).resolve()
+        archive_path = (export_root / (person.slug + ".zip")).resolve()
+        vault_path = (export_root / person.slug).resolve()
+        if archive_path.parent == export_root and archive_path.is_file():
+            archive_path.unlink()
+        if vault_path.parent == export_root and vault_path.is_dir():
+            shutil.rmtree(vault_path)
+        return {
+            "id": person_id,
+            "name": person.name,
+            "removed": True,
+            "source_count": source_count,
+            "document_count": document_count,
+        }
+
     @app.post("/api/persons")
     def create_person(payload: Dict[str, Any]) -> Dict[str, Any]:
         name = str(payload.get("name", "")).strip()
@@ -749,6 +921,7 @@ def create_app(
                     repository,
                     current_search_provider(),
                     identity_reference_provider,
+                    active_academic_provider,
                 ).discover(person, anchors)
             except SearchProviderError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -769,6 +942,7 @@ def create_app(
                     repository,
                     current_search_provider(),
                     identity_reference_provider,
+                    active_academic_provider,
                 ).discover(person, anchors)
             except SearchProviderError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -783,14 +957,15 @@ def create_app(
                 eligible,
                 key=lambda item: _identity_sort_key(item, eligible, anchors),
             )
-            primary_payload = _identity_option_payload(primary, person.name)
+            primary_payload = _identity_option_payload(primary, person.name, primary, anchors)
             return {
                 "person_id": person_id,
                 "name": person.name,
                 "canonical_name": primary_payload["canonical_name"],
                 "primary_source": primary_payload,
                 "identity_options": [
-                    _identity_option_payload(item, person.name) for item in ordered[:6]
+                    _identity_option_payload(item, person.name, primary, anchors)
+                    for item in ordered[:8]
                 ],
                 "platform_links": _platform_links(candidates),
             }
@@ -977,8 +1152,12 @@ def create_app(
         return FileResponse(str(Path(zip_path)), filename=Path(zip_path).name, media_type="application/zip")
 
     def select_candidates(
-        candidates: List[SourceCandidate], anchors: List[str], limit: int = 12
+        candidates: List[SourceCandidate],
+        anchors: List[str],
+        baseline: Optional[SourceCandidate] = None,
+        limit: int = 20,
     ) -> List[SourceCandidate]:
+        identity_baseline = baseline or _primary_identity_source(candidates, anchors)
         eligible = [
             item
             for item in candidates
@@ -986,6 +1165,10 @@ def create_app(
             and item.score >= 45
             and item.source_role != "aggregator_repost"
             and not _era_conflict(item, candidates, anchors)
+            and not (
+                identity_baseline
+                and _candidate_identity_conflicts(item, identity_baseline, anchors)
+            )
         ]
         selected: List[SourceCandidate] = []
         selected_ids = set()
@@ -1020,7 +1203,11 @@ def create_app(
             if item.id in selected_ids:
                 continue
             host = (urlparse(item.url).hostname or "").lower()
-            if host_counts.get(host, 0) >= 2:
+            host_limit = 8 if host in {
+                "doi.org", "openalex.org", "semanticscholar.org",
+                "scholar.google.com", "orcid.org", "researchgate.net",
+            } else 2
+            if host_counts.get(host, 0) >= host_limit:
                 continue
             selected.append(item)
             selected_ids.add(item.id)
@@ -1048,12 +1235,14 @@ def create_app(
                         repository,
                         current_search_provider(),
                         identity_reference_provider,
+                        active_academic_provider,
                     ).discover(person, anchors)
-                selected = select_candidates(candidates, anchors)
+                confirmed = next(
+                    (item for item in candidates if item.url == confirmed_source_url),
+                    None,
+                ) if confirmed_source_url else None
+                selected = select_candidates(candidates, anchors, confirmed)
                 if confirmed_source_url:
-                    confirmed = next(
-                        (item for item in candidates if item.url == confirmed_source_url), None
-                    )
                     if confirmed and confirmed.id:
                         repository.decide_candidate(confirmed.id, "accepted")
                 for candidate in selected:
@@ -1096,6 +1285,7 @@ def create_app(
                     repository.list_sources(person_id),
                     documents,
                     language_mode=language_mode,
+                    identity_reference_url=confirmed_source_url,
                 )
                 report_content["public_profiles"] = _platform_links(
                     [

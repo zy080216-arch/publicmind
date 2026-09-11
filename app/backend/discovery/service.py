@@ -9,6 +9,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from ..models import Person, SourceCandidate
 from ..store import Repository
 from .base import SearchProvider, SearchProviderError
+from .academic import AcademicIndexProvider
 from .scoring import score_hit
 
 try:
@@ -65,16 +66,39 @@ def canonical_url(url: str) -> str:
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, query, ""))
 
 
+def _is_academic_identity(person: Person, anchors: Sequence[str]) -> bool:
+    text = "%s %s %s" % (person.name, person.description or "", " ".join(anchors))
+    return bool(re.search(
+        r"大学|学院|研究院|实验室|研究所|教授|院长|导师|博士|学者|工程|科学|医学|"
+        r"university|college|institute|professor|dean|ph\.?d|research|engineering|science",
+        text,
+        flags=re.IGNORECASE,
+    ))
+
+
+def _academic_identity_terms(anchors: Sequence[str]) -> List[str]:
+    terms = list(anchors)
+    terms.extend(
+        english
+        for anchor in anchors
+        for label, english in INSTITUTION_ENGLISH_NAMES.items()
+        if label in anchor
+    )
+    return list(dict.fromkeys(term for term in terms if term))
+
+
 class DiscoveryService:
     def __init__(
         self,
         repository: Repository,
         provider: SearchProvider,
         reference_provider: Optional[SearchProvider] = None,
+        academic_provider: Optional[AcademicIndexProvider] = None,
     ) -> None:
         self.repository = repository
         self.provider = provider
         self.reference_provider = reference_provider
+        self.academic_provider = academic_provider
 
     @staticmethod
     def queries(person: Person, anchors: Sequence[str]) -> List[str]:
@@ -123,6 +147,15 @@ class DiscoveryService:
                         queries.append('"%s" "%s" professor dean profile' % (romanized_name, institution))
                 else:
                     queries.append('"%s" professor researcher profile' % romanized_name)
+        if _is_academic_identity(person, anchors):
+            academic_name = _romanized_names(person.name)[-1] if _romanized_names(person.name) else person.name
+            academic_anchor = " ".join(anchors[:3])
+            queries.extend([
+                '"%s" %s publications papers DOI' % (academic_name, academic_anchor),
+                '"%s" %s site:scholar.google.com/citations OR site:orcid.org' % (academic_name, academic_anchor),
+                '"%s" %s site:openalex.org OR site:semanticscholar.org' % (academic_name, academic_anchor),
+                '"%s" %s filetype:pdf 论文 代表作 学术成果' % (person.name, academic_anchor),
+            ])
         return list(dict.fromkeys(query.strip() for query in queries if query.strip()))
 
     def discover(self, person: Person, anchors: Sequence[str], per_query: int = 8) -> List[SourceCandidate]:
@@ -146,6 +179,34 @@ class DiscoveryService:
                     score=scored.score,
                     source_role=scored.source_role,
                     reasons=scored.reasons + ["百科生平基线"],
+                    risks=scored.risks,
+                )
+                candidates.append(self.repository.upsert_candidate(candidate))
+        if self.academic_provider is not None and _is_academic_identity(person, anchors):
+            romanized_names = _romanized_names(person.name)
+            academic_search_name = romanized_names[-1] if romanized_names else person.name
+            try:
+                academic_hits = self.academic_provider.search(
+                    academic_search_name, _academic_identity_terms(anchors), count=18
+                )
+            except SearchProviderError:
+                academic_hits = []
+            for hit in academic_hits:
+                normalized_url = canonical_url(hit.url)
+                if normalized_url in seen:
+                    continue
+                seen.add(normalized_url)
+                scored = score_hit(hit, person.name, anchors)
+                candidate = SourceCandidate(
+                    person_id=person.id or "",
+                    url=normalized_url,
+                    title=hit.title or normalized_url,
+                    snippet=hit.snippet,
+                    provider=self.academic_provider.name,
+                    query="%s academic publications" % person.name,
+                    score=min(100, scored.score + 8),
+                    source_role=scored.source_role,
+                    reasons=scored.reasons + ["学术作者与论文索引"],
                     risks=scored.risks,
                 )
                 candidates.append(self.repository.upsert_candidate(candidate))

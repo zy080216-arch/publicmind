@@ -116,7 +116,21 @@ function renderPeople() {
       el.dossier_source_url.focus();
       el.dossier_source_form.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-    actions.append(open, update);
+    const remove = node("button", "person-remove", "删除");
+    remove.type = "button";
+    remove.addEventListener("click", () => {
+      confirmSourceRemoval(actions, async () => {
+        await request(`/api/persons/${person.id}`, { method: "DELETE" });
+        state.people = state.people.filter((item) => item.id !== person.id);
+        if (state.activePersonId === person.id) {
+          state.activePersonId = null;
+          el.result_panel.hidden = true;
+        }
+        renderPeople();
+        notice(`“${person.name}”及其人物资料已删除。`, "info");
+      });
+    });
+    actions.append(open, update, remove);
     row.append(copy, count, actions);
     el.person_list.append(row);
   });

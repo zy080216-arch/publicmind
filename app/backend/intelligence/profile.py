@@ -125,7 +125,7 @@ def validate_profile(raw: Dict[str, Any], allowed_urls: Iterable[str], person_na
 
 
 class ProfileBuilder:
-    def __init__(self, provider: LLMProvider, max_documents: int = 18, chars_per_document: int = 9000) -> None:
+    def __init__(self, provider: LLMProvider, max_documents: int = 24, chars_per_document: int = 9000) -> None:
         self.provider = provider
         self.max_documents = max_documents
         self.chars_per_document = chars_per_document
@@ -136,6 +136,7 @@ class ProfileBuilder:
         sources: List[Source],
         documents: List[Document],
         language_mode: str = "zh",
+        identity_reference_url: str = "",
     ) -> Dict[str, Any]:
         if not documents:
             raise LLMProviderError("没有可用于生成人物报告的文档")
@@ -146,6 +147,11 @@ class ProfileBuilder:
                 "\n".join(
                     [
                         "[DOCUMENT %d]" % index,
+                        "IDENTITY: %s" % (
+                            "CONFIRMED PRIMARY PERSON SOURCE"
+                            if document.source_url == identity_reference_url
+                            else "SUPPORTING SOURCE"
+                        ),
                         "TITLE: %s" % document.title,
                         "URL: %s" % document.source_url,
                         "AUTHOR: %s" % (document.author or "未知"),
@@ -199,7 +205,7 @@ class ProfileBuilder:
 身份备注：{description}
 输出语言：{language_instruction}
 
-请生成完整人物全景报告数据，重点覆盖“人物生平”“做过什么”和“主要观点”。人物生平按成长阶段组织，优先写早年背景、教育、职业起点、关键转折、选择动因及这些经历如何塑造后来的道路；不要把它写成只有日期的时间线，也不要重复罗列成就。合并重复信息；本人观点与媒体评价分开；只有资料明确支持时间差异时才写观点演变；资料没有支持的内容不要写。source_urls 只能逐字使用文档中的 URL。即使某一部分资料不足，也返回空数组。严格遵守下面的 JSON 结构：
+请生成完整人物全景报告数据，重点覆盖“人物生平”“做过什么”和“主要观点”。人物生平按成长阶段组织，优先写早年背景、教育、职业起点、关键转折、选择动因及这些经历如何塑造后来的道路；不要把它写成只有日期的时间线，也不要重复罗列成就。标为 CONFIRMED PRIMARY PERSON SOURCE 的资料是人物身份基准；如果其他文档中的姓名、出生年代、年龄、性别或主要领域与它明显矛盾，应把整篇冲突文档视为同名他人并忽略，绝不能把两个人合并。任职机构随时间变化本身不算冲突，应结合时间和履历判断。合并重复信息；本人观点与媒体评价分开；只有资料明确支持时间差异时才写观点演变；资料没有支持的内容不要写。source_urls 只能逐字使用文档中的 URL。即使某一部分资料不足，也返回空数组。严格遵守下面的 JSON 结构：
 {schema}
 
 资料：
